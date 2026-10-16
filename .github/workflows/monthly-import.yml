@@ -1,0 +1,23 @@
+name: Monthly UNDP and ITU import
+on:
+  schedule:
+    - cron: "0 4 5 * *"      # 5th of every month, 04:00 UTC
+  workflow_dispatch: {}       # or start it by hand from the Actions tab
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        provider: [UNDP, ITU]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests
+      - name: Import ${{ matrix.provider }}
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          FILE_URL: ${{ matrix.provider == 'UNDP' && vars.UNDP_FILE_URL || vars.ITU_FILE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python monthly-file-import/import_file.py
