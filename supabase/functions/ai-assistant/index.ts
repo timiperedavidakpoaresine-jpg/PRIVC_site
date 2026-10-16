@@ -35,9 +35,14 @@ async function allow(k: string, limit: number) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
-  if (req.method !== "POST") return out(req, { error: { type: "method" } }, 405);
   const o = req.headers.get("origin") || "";
   if (!ALLOWED.includes("*") && o && !ALLOWED.includes(o)) return out(req, { error: { type: "origin_not_allowed" } }, 403);
+  if (req.method === "GET") {
+    return KEY
+      ? out(req, { ok: true, configured: true })
+      : out(req, { ok: false, configured: false, error: { type: "not_configured" } }, 503);
+  }
+  if (req.method !== "POST") return out(req, { error: { type: "method" } }, 405);
   if (!KEY) return out(req, { error: { type: "not_configured", message: "ANTHROPIC_API_KEY is not set" } }, 503);
   if (CODE && req.headers.get("x-access-code") !== CODE) return out(req, { error: { type: "access_code" } }, 401);
   try {
