@@ -8,6 +8,8 @@
   var profileView;
   var accountDialog;
   var statusElement;
+  var notificationButton;
+  var notificationPanel;
   var authMode = "signup";
   var recoveryMode = false;
   var authChangeVersion = 0;
@@ -46,6 +48,80 @@
     return window.PRIVC_AUTH ? window.PRIVC_AUTH.siteBasePath() : "/";
   }
 
+  async function requireSession() {
+    if (!state.session || !state.session.user) {
+      var accountButton = document.getElementById("account-open");
+      if (accountButton && typeof accountButton.click === "function") accountButton.click();
+      return null;
+    }
+    return state.session;
+  }
+
+  async function refreshNotifications() {
+    if (!notificationButton || !state.session || !state.session.user) {
+      if (notificationButton) notificationButton.hidden = true;
+      if (notificationPanel) notificationPanel.hidden = true;
+      return;
+    }
+    try {
+      var result = await client().from("notifications")
+        .select("id,user_id,kind,actor_id,paper_id,profile_id,message,is_read,created_at")
+        .eq("user_id", state.session.user.id)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      if (result.error) throw result.error;
+      var unread = (result.data || []).filter(function (item) { return !item.is_read; }).length;
+      notificationButton.textContent = unread ? "🔔 (" + unread + ")" : "🔔";
+      notificationButton.hidden = false;
+    } catch (error) {
+      notificationButton.hidden = true;
+    }
+  }
+
+  async function toggleNotifications() {
+    if (!state.session || !state.session.user) {
+      var accountButton = document.getElementById("account-open");
+      if (accountButton && typeof accountButton.click === "function") accountButton.click();
+      return;
+    }
+    if (!notificationPanel) return;
+    if (notificationPanel.hidden) {
+      try {
+        var result = await client().from("notifications")
+          .select("id,user_id,kind,actor_id,paper_id,profile_id,message,is_read,created_at")
+          .eq("user_id", state.session.user.id)
+          .order("created_at", { ascending: false })
+          .limit(10);
+        if (result.error) throw result.error;
+        var rows = result.data || [];
+        var items = rows.length
+          ? rows.map(function (item) {
+              return '<div class="paper-card" style="margin:0 0 8px;padding:8px 10px;"><div class="paper-card-meta">' +
+                escapeHtml(new Date(item.created_at).toLocaleDateString()) + '</div><div>' +
+                escapeHtml(item.message || "Notification") + '</div></div>';
+            }).join("")
+          : '<div class="account-muted">No notifications yet.</div>';
+        notificationPanel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Notifications</strong><button type="button" data-notif-close>Close</button></div>' + items;
+        notificationPanel.hidden = false;
+        notificationPanel.querySelector("[data-notif-close]").addEventListener("click", function () {
+          notificationPanel.hidden = true;
+        });
+        if (rows.length) {
+          var unreadIds = rows.filter(function (row) { return !row.is_read; }).map(function (row) { return row.id; });
+          if (unreadIds.length) {
+            await client().from("notifications").update({ is_read: true }).in("id", unreadIds);
+            await refreshNotifications();
+          }
+        }
+      } catch (error) {
+        notificationPanel.innerHTML = '<div class="account-muted">Notifications could not be loaded.</div>';
+        notificationPanel.hidden = false;
+      }
+    } else {
+      notificationPanel.hidden = true;
+    }
+  }
+
   function profileHref(username) {
     return routeBase() + "u/" + encodeURIComponent(username);
   }
@@ -77,6 +153,32 @@
     accountButton.setAttribute("aria-controls", "account-dialog");
     accountButton.textContent = "Sign in / Join";
     document.getElementById("mb").insertAdjacentElement("afterend", accountButton);
+
+    notificationButton = document.createElement("button");
+    notificationButton.type = "button";
+    notificationButton.id = "notifications-bell";
+    notificationButton.setAttribute("aria-label", "View notifications");
+    notificationButton.title = "Notifications";
+    notificationButton.textContent = "🔔";
+    notificationButton.hidden = true;
+    accountButton.insertAdjacentElement("afterend", notificationButton);
+
+    notificationPanel = document.createElement("div");
+    notificationPanel.id = "notifications-panel";
+    notificationPanel.className = "account-dialog account-dialog-inner";
+    notificationPanel.hidden = true;
+    notificationPanel.style.position = "absolute";
+    notificationPanel.style.right = "0";
+    notificationPanel.style.top = "54px";
+    notificationPanel.style.width = "min(320px, calc(100vw - 24px))";
+    notificationPanel.style.zIndex = "1000";
+    notificationPanel.style.padding = "12px";
+    notificationPanel.style.background = "rgba(255,255,255,0.96)";
+    notificationPanel.style.border = "1px solid rgba(132,140,208,.28)";
+    notificationPanel.style.borderRadius = "12px";
+    notificationPanel.style.boxShadow = "0 12px 34px rgba(57,72,137,.12)";
+    notificationButton.parentNode.insertBefore(notificationPanel, notificationButton.nextSibling);
+    notificationButton.addEventListener("click", toggleNotifications);
 
     var root = document.createElement("div");
     root.innerHTML = '<dialog id="account-dialog" class="account-dialog" aria-labelledby="account-title">' +
@@ -334,6 +436,7 @@
     var globalSignOut = document.getElementById("so");
     if (accountButton) accountButton.textContent = state.session ? "My account" : "Sign in / Join";
     if (globalSignOut) globalSignOut.hidden = !state.session;
+    if (notificationButton) notificationButton.hidden = !state.session;
     document.getElementById("account-auth-panel").hidden = Boolean(state.session) || recoveryMode;
     document.getElementById("account-user-panel").hidden = !state.session || recoveryMode;
     document.getElementById("account-recovery-panel").hidden = !recoveryMode;
@@ -345,6 +448,7 @@
       document.getElementById("account-greeting").textContent = "";
       if (detail.event === "UNAVAILABLE") setStatus(detail.error.message, true);
       if (state.route && previousUserId !== userId) handleProfileRoute();
+      if (notificationButton) notificationButton.hidden = true;
       return;
     }
     try {
@@ -358,6 +462,7 @@
       if (chipText) chipText.textContent = "Researcher · " +
         (state.profile ? "@" + state.profile.username : state.session.user.email);
       if (state.route && previousUserId !== userId) handleProfileRoute();
+      await refreshNotifications();
     } catch (error) {
       if (changeVersion !== authChangeVersion) return;
       setStatus("Signed in, but profile loading failed: " + error.message, true);
@@ -512,6 +617,12 @@
         } catch (error) {
           website = "";
         }
+        var profileActionMarkup = "";
+        if (state.session && state.session.user.id === profile.id) {
+          profileActionMarkup = '<div class="profile-page-actions"><button type="button" data-profile-edit>Edit profile</button></div>';
+        } else {
+          profileActionMarkup = '<div class="profile-page-actions"><button type="button" data-profile-follow>Follow</button></div>';
+        }
         profileView.innerHTML = '<button type="button" data-profile-back>Back to Atlas</button>' +
           '<div class="profile-page-head" style="margin-top:16px">' + avatarMarkup(profile) +
           '<div><h2>' + escapeHtml(profile.display_name || profile.username) + '</h2>' +
@@ -523,9 +634,7 @@
           (interests ? '<h3>Research interests</h3><div class="profile-interests">' + interests + "</div>" : "") +
           (profile.orcid ? '<p><b>ORCID</b> ' + escapeHtml(profile.orcid) + "</p>" : "") +
           (website ? '<p>' + website + "</p>" : "") +
-          (state.session && state.session.user.id === profile.id
-            ? '<div class="profile-page-actions"><button type="button" data-profile-edit>Edit profile</button></div>'
-            : "") +
+          profileActionMarkup +
           '<div class="profile-phase-note">Publications, follows and verified readership metrics will appear as the publishing and community phases are enabled.</div>';
       }
       profileView.querySelectorAll("[data-profile-back]").forEach(function (button) {
@@ -539,6 +648,51 @@
       });
       var editButton = profileView.querySelector("[data-profile-edit]");
       if (editButton) editButton.addEventListener("click", editProfile);
+
+      var followButton = profileView.querySelector("[data-profile-follow]");
+      if (followButton) {
+        var followState = { following: false, count: 0 };
+        try {
+          var followResult = await client().from("profile_follows")
+            .select("follower_id, followed_id", { count: "exact" })
+            .eq("followed_id", profile.id);
+          if (!followResult.error) {
+            followState.count = Number(followResult.count || 0);
+            var sessionResult = await client().auth.getSession();
+            if (!sessionResult.error && sessionResult.data && sessionResult.data.session) {
+              var currentFollowing = await client().from("profile_follows")
+                .select("follower_id")
+                .eq("followed_id", profile.id)
+                .eq("follower_id", sessionResult.data.session.user.id)
+                .maybeSingle();
+              followState.following = !currentFollowing.error && Boolean(currentFollowing.data);
+            }
+          }
+        } catch (error) {
+          followState = { following: false, count: 0 };
+        }
+        followButton.textContent = followState.following ? "Following" : "Follow";
+        followButton.classList.toggle("on", followState.following);
+        followButton.title = followState.count + " followers";
+        followButton.addEventListener("click", async function () {
+          var session = await requireSession();
+          if (!session) return;
+          if (profile.id === session.user.id) return;
+          try {
+            if (followState.following) {
+              await client().from("profile_follows").delete().eq("follower_id", session.user.id).eq("followed_id", profile.id);
+              followState.following = false;
+            } else {
+              await client().from("profile_follows").insert({ follower_id: session.user.id, followed_id: profile.id });
+              followState.following = true;
+            }
+            followButton.textContent = followState.following ? "Following" : "Follow";
+            followButton.classList.toggle("on", followState.following);
+          } catch (error) {
+            followButton.textContent = error.message || "Could not update follow state.";
+          }
+        });
+      }
     } catch (error) {
       if (routeVersion !== profileRouteVersion) return;
       profileView.innerHTML = '<button type="button" data-profile-back>Back to Atlas</button>' +

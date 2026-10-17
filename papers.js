@@ -50,6 +50,219 @@
     return window.PRIVC_AUTH ? window.PRIVC_AUTH.siteBasePath() : "/";
   }
 
+  async function requireActiveSession() {
+    try {
+      var sessionResult = await client().auth.getSession();
+      if (sessionResult.error || !sessionResult.data || !sessionResult.data.session) {
+        var accountButton = document.getElementById("account-open");
+        if (accountButton && typeof accountButton.click === "function") accountButton.click();
+        return null;
+      }
+      return sessionResult.data.session;
+    } catch (error) {
+      var accountButton = document.getElementById("account-open");
+      if (accountButton && typeof accountButton.click === "function") accountButton.click();
+      return null;
+    }
+  }
+
+  async function loadPaperEngagement(paperId) {
+    var userSession = null;
+    try {
+      var sessionResult = await client().auth.getSession();
+      if (!sessionResult.error && sessionResult.data && sessionResult.data.session) userSession = sessionResult.data.session;
+    } catch (error) {
+      userSession = null;
+    }
+    var likeResult = await client().from("paper_likes").select("paper_id", { count: "exact" }).eq("paper_id", paperId);
+    var commentResult = await client().from("paper_comments").select("id", { count: "exact" }).eq("paper_id", paperId);
+    var bookmarkResult = userSession
+      ? await client().from("paper_bookmarks").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
+      : { data: null, error: null };
+    var likeStateResult = userSession
+      ? await client().from("paper_likes").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
+      : { data: null, error: null };
+    return {
+      like_count: Number((likeResult && likeResult.count) || 0),
+      comment_count: Number((commentResult && commentResult.count) || 0),
+      liked: !likeStateResult.error && Boolean(likeStateResult.data),
+      bookmarked: !bookmarkResult.error && Boolean(bookmarkResult.data)
+    };
+  }
+
+  function paperEngagementMarkup(paper, state) {
+    var likeCount = Number(state && state.like_count || 0).toLocaleString();
+    var commentCount = Number(state && state.comment_count || 0).toLocaleString();
+    var likedClass = state && state.liked ? " on" : "";
+    var bookmarkedClass = state && state.bookmarked ? " on" : "";
+    var paperId = escapeHtml(paper.id);
+    return '<div class="paper-engagement" data-paper-engagement="' + paperId + '">' +
+      '<button type="button" class="paper-action paper-like-btn' + likedClass + '" data-paper-like="' + paperId + '">' +
+      (state && state.liked ? '♥' : '♡') + ' <span class="paper-like-count">' + likeCount + '</span></button>' +
+      '<button type="button" class="paper-action paper-comment-btn" data-paper-comment-toggle="' + paperId + '">💬 <span class="paper-comment-count">' + commentCount + '</span></button>' +
+      '<button type="button" class="paper-action paper-bookmark-btn' + bookmarkedClass + '" data-paper-bookmark="' + paperId + '">' +
+      (state && state.bookmarked ? '🔖' : '📑') + '</button>' +
+      '<div class="paper-comment-box" data-paper-comment-box="' + paperId + '" hidden></div>' +
+      '</div>';
+  }
+
+  async function renderPaperEngagement(paperId, rootElement) {
+    if (!rootElement) return;
+    var state = await loadPaperEngagement(paperId);
+    var likeButtons = rootElement.querySelectorAll("[data-paper-like]");
+    var commentButtons = rootElement.querySelectorAll("[data-paper-comment-toggle]");
+    var bookmarkButtons = rootElement.querySelectorAll("[data-paper-bookmark]");
+    var commentBox = rootElement.querySelector("[data-paper-comment-box]");
+    likeButtons.forEach(function (button) {
+      if (button.dataset.paperLike !== paperId) return;
+      button.classList.toggle("on", state.liked);
+      button.innerHTML = (state.liked ? '♥' : '♡') + ' <span class="paper-like-count">' + Number(state.like_count || 0).toLocaleString() + '</span>';
+      button.addEventListener("click", async function () {
+        var session = await requireActiveSession();
+        if (!session) return;
+        try {
+          if (state.liked) {
+            await client().from("paper_likes").delete().eq("paper_id", paperId).eq("user_id", session.user.id);
+            state.liked = false;
+            state.like_count = Math.max(0, state.like_count - 1);
+          } else {
+            await client().from("paper_likes").insert({ paper_id: paperId, user_id: session.user.id });
+            state.liked = true;
+            state.like_count += 1;
+          }
+          button.innerHTML = (state.liked ? '♥' : '♡') + ' <span class="paper-like-count">' + Number(state.like_count || 0).toLocaleString() + '</span>';
+          button.classList.toggle("on", state.liked);
+        } catch (error) {
+          button.textContent = error.message || "Could not update like.";
+        }
+      });
+    });
+    bookmarkButtons.forEach(function (button) {
+      if (button.dataset.paperBookmark !== paperId) return;
+      button.classList.toggle("on", state.bookmarked);
+      button.textContent = state.bookmarked ? "🔖" : "📑";
+      button.addEventListener("click", async function () {
+        var session = await requireActiveSession();
+        if (!session) return;
+        try {
+          if (state.bookmarked) {
+            await client().from("paper_bookmarks").delete().eq("paper_id", paperId).eq("user_id", session.user.id);
+            state.bookmarked = false;
+          } else {
+            await client().from("paper_bookmarks").insert({ paper_id: paperId, user_id: session.user.id });
+            state.bookmarked = true;
+          }
+          button.classList.toggle("on", state.bookmarked);
+          button.textContent = state.bookmarked ? "🔖" : "📑";
+        } catch (error) {
+          button.textContent = error.message || "Could not update bookmark.";
+        }
+      });
+    });
+    commentButtons.forEach(function (button) {
+      if (button.dataset.paperCommentToggle !== paperId) return;
+      button.addEventListener("click", async function () {
+        var session = await requireActiveSession();
+        if (!session) return;
+        if (!commentBox) return;
+        var hidden = commentBox.hidden;
+        commentBox.hidden = !hidden;
+        if (hidden) {
+          await loadCommentThread(paperId, commentBox);
+        }
+      });
+    });
+  }
+
+  async function loadCommentThread(paperId, commentBox) {
+    if (!commentBox) return;
+    try {
+      var result = await client().from("paper_comments")
+        .select("id,paper_id,user_id,parent_comment_id,body,created_at")
+        .eq("paper_id", paperId)
+        .order("created_at", { ascending: true });
+      if (result.error) throw result.error;
+      var rows = result.data || [];
+      var byParent = {};
+      rows.forEach(function (comment) {
+        var key = comment.parent_comment_id || "root";
+        if (!byParent[key]) byParent[key] = [];
+        byParent[key].push(comment);
+      });
+      function renderComments(parentKey, depth) {
+        var list = byParent[parentKey] || [];
+        return list.map(function (comment) {
+          var children = renderComments(comment.id, depth + 1);
+          return '<div class="paper-comment" style="margin-left:' + (depth * 12) + 'px; margin-top:8px; border-left:1px solid rgba(132,140,208,.25); padding-left:8px;">' +
+            '<div class="paper-card-meta">' + escapeHtml(comment.user_id.slice(0, 8)) + ' · ' + escapeHtml(new Date(comment.created_at).toLocaleDateString()) + '</div>' +
+            '<div>' + escapeHtml(comment.body) + '</div>' +
+            '<button type="button" class="paper-action paper-reply-btn" data-paper-reply="' + escapeHtml(comment.id) + '">Reply</button>' +
+            children +
+            '</div>';
+        }).join("");
+      }
+      var form = '<form class="paper-comment-form" data-paper-comment-form="' + escapeHtml(paperId) + '">' +
+        '<textarea rows="2" data-paper-comment-body placeholder="Add a comment…" maxlength="2000"></textarea>' +
+        '<div class="row"><button type="submit" class="pri">Comment</button></div>' +
+        '</form>';
+      commentBox.innerHTML = '<div class="paper-comment-list">' + renderComments("root", 0) + '</div>' + form;
+      commentBox.querySelector(".paper-comment-form").addEventListener("submit", async function (event) {
+        event.preventDefault();
+        var session = await requireActiveSession();
+        if (!session) return;
+        var textarea = commentBox.querySelector("[data-paper-comment-body]");
+        var body = String(textarea.value || "").trim();
+        if (!body) return;
+        try {
+          await client().from("paper_comments").insert({
+            paper_id: paperId,
+            user_id: session.user.id,
+            body: body
+          });
+          textarea.value = "";
+          await loadCommentThread(paperId, commentBox);
+          var count = await loadPaperEngagement(paperId);
+          var commentCountButton = commentBox.closest(".paper-engagement") && commentBox.closest(".paper-engagement").querySelector(".paper-comment-count");
+          if (commentCountButton) commentCountButton.textContent = Number(count.comment_count || 0).toLocaleString();
+        } catch (error) {
+          textarea.value = error.message || "Comment failed.";
+        }
+      });
+      commentBox.querySelectorAll("[data-paper-reply]").forEach(function (replyButton) {
+        replyButton.addEventListener("click", async function () {
+          var session = await requireActiveSession();
+          if (!session) return;
+          var replyForm = '<form class="paper-comment-form" data-paper-reply-form="' + escapeHtml(replyButton.dataset.paperReply) + '">' +
+            '<textarea rows="2" data-paper-reply-body placeholder="Write a reply…" maxlength="2000"></textarea>' +
+            '<div class="row"><button type="submit" class="pri">Reply</button></div>' +
+            '</form>';
+          var replyHost = replyButton.parentElement;
+          if (replyHost.querySelector("[data-paper-reply-form]")) return;
+          replyHost.insertAdjacentHTML("beforeend", replyForm);
+          var replyFormElement = replyHost.querySelector("[data-paper-reply-form]");
+          replyFormElement.addEventListener("submit", async function (replyEvent) {
+            replyEvent.preventDefault();
+            var replyBody = String(replyFormElement.querySelector("[data-paper-reply-body]").value || "").trim();
+            if (!replyBody) return;
+            try {
+              await client().from("paper_comments").insert({
+                paper_id: paperId,
+                user_id: session.user.id,
+                parent_comment_id: replyButton.dataset.paperReply,
+                body: replyBody
+              });
+              await loadCommentThread(paperId, commentBox);
+            } catch (error) {
+              replyFormElement.querySelector("[data-paper-reply-body]").value = error.message || "Reply failed.";
+            }
+          });
+        });
+      });
+    } catch (error) {
+      commentBox.innerHTML = '<div class="paper-muted error">Could not load comments: ' + escapeHtml(error.message || "Supabase request failed.") + '</div>';
+    }
+  }
+
   function paperPath(id) {
     return routeBase() + "papers/" + encodeURIComponent(id);
   }
@@ -93,6 +306,7 @@
       (paper.keywords && paper.keywords.length
         ? '<p class="paper-keywords"><b>Topics:</b> ' +
           escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
+      paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false }) +
       '<a class="paper-open-link" href="' + escapeHtml(paperPath(paper.id)) +
       '" data-paper-detail="' + escapeHtml(paper.id) + '">View paper</a></article>';
   }
@@ -113,6 +327,7 @@
       (paper.keywords && paper.keywords.length
         ? '<p class="paper-keywords">' + escapeHtml(paper.keywords.join(", ")) + "</p>" : "");
     if (isPublic) {
+      html += paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false });
       html += '<button type="button" class="paper-download" data-download="' +
         escapeHtml(paper.id) + '">Download PDF</button>';
     } else {
@@ -123,6 +338,7 @@
         html += '<p class="paper-feedback"><b>Reviewer feedback</b><br>' +
           escapeHtml(paper.review_feedback) + "</p>";
       }
+      html += paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false });
       if (paper.pdf_path) {
         html += '<button type="button" data-download="' + escapeHtml(paper.id) +
           '">Download my PDF</button> ';
@@ -372,6 +588,7 @@
         ? '<p class="paper-keywords"><b>Topics:</b> ' + escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
       '<section><h2>Abstract</h2><p class="paper-abstract">' +
       escapeHtml(paper.abstract || "No abstract was provided.") + '</p></section>' +
+      paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false }) +
       '<button type="button" class="pri" data-download="' + escapeHtml(paper.id) + '">Open PDF</button>' +
       '<p id="paper-detail-status" class="paper-status-message" role="status" aria-live="polite">' +
       escapeHtml(profileError) + '</p>' +
@@ -416,6 +633,8 @@
         .filter(Boolean).join(" ");
       detailStatus.classList.add("error");
     }
+    var engagementRoot = paperView.querySelector(".paper-engagement");
+    if (engagementRoot) await renderPaperEngagement(paper.id, engagementRoot.parentElement || engagementRoot);
   }
 
   function handlePaperRoute() {
