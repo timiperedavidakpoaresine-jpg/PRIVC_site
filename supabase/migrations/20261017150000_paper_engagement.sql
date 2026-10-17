@@ -9,6 +9,7 @@ create table if not exists public.paper_likes (
   created_at timestamptz not null default now(),
   primary key (paper_id, user_id)
 );
+alter table public.paper_likes enable row level security;
 
 create table if not exists public.paper_comments (
   id uuid primary key default gen_random_uuid(),
@@ -19,6 +20,7 @@ create table if not exists public.paper_comments (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table public.paper_comments enable row level security;
 
 create table if not exists public.profile_follows (
   follower_id uuid not null references public.profiles(id) on delete cascade,
@@ -27,6 +29,7 @@ create table if not exists public.profile_follows (
   primary key (follower_id, followed_id),
   check (follower_id <> followed_id)
 );
+alter table public.profile_follows enable row level security;
 
 create table if not exists public.paper_bookmarks (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -34,6 +37,7 @@ create table if not exists public.paper_bookmarks (
   created_at timestamptz not null default now(),
   primary key (user_id, paper_id)
 );
+alter table public.paper_bookmarks enable row level security;
 
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(),
@@ -46,6 +50,7 @@ create table if not exists public.notifications (
   is_read boolean not null default false,
   created_at timestamptz not null default now()
 );
+alter table public.notifications enable row level security;
 
 create index if not exists paper_likes_paper_idx
   on public.paper_likes (paper_id, created_at desc);
@@ -127,6 +132,35 @@ $function$;
 revoke all on function public.privc_paper_comment_count(uuid) from public;
 grant execute on function public.privc_paper_comment_count(uuid) to anon, authenticated;
 
+create or replace function public.privc_validate_comment_parent()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+declare
+  parent_paper_id uuid;
+begin
+  if new.parent_comment_id is null then
+    return new;
+  end if;
+
+  select paper_id into parent_paper_id
+  from public.paper_comments
+  where id = new.parent_comment_id;
+
+  if parent_paper_id is null then
+    raise exception 'Parent comment not found.' using errcode = 'P0002';
+  end if;
+
+  if parent_paper_id <> new.paper_id then
+    raise exception 'Parent comment must belong to the same paper.' using errcode = 'P0003';
+  end if;
+
+  return new;
+end
+$function$;
+revoke all on function public.privc_validate_comment_parent() from public, anon, authenticated;
+
 create or replace function public.privc_set_comment_updated_at()
 returns trigger
 language plpgsql
@@ -141,6 +175,17 @@ revoke all on function public.privc_set_comment_updated_at() from public, anon, 
 
 do $migration$
 begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.paper_comments'::regclass
+      and tgname = 'privc_validate_comment_parent'
+      and not tgisinternal
+  ) then
+    create trigger privc_validate_comment_parent
+      before insert or update on public.paper_comments
+      for each row execute function public.privc_validate_comment_parent();
+  end if;
+
   if not exists (
     select 1 from pg_trigger
     where tgrelid = 'public.paper_comments'::regclass
@@ -407,8 +452,3 @@ begin
 end
 $migration$;
 
-alter table public.paper_likes enable row level security;
-alter table public.paper_comments enable row level security;
-alter table public.profile_follows enable row level security;
-alter table public.paper_bookmarks enable row level security;
-alter table public.notifications enable row level security;
