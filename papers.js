@@ -218,6 +218,8 @@
             '<div class="paper-card-meta">' + escapeHtml(comment.user_id.slice(0, 8)) + ' · ' + escapeHtml(new Date(comment.created_at).toLocaleDateString()) + '</div>' +
             '<div>' + escapeHtml(comment.body) + '</div>' +
             '<button type="button" class="paper-action paper-reply-btn" data-paper-reply="' + escapeHtml(comment.id) + '">Reply</button>' +
+            '<button type="button" class="paper-action" data-report-comment="' + escapeHtml(comment.id) +
+            '"' + (session ? "" : " hidden") + '>Report</button>' +
             children +
             '</div>';
         }).join("");
@@ -398,7 +400,24 @@
       '<div class="paper-review-actions">' + actions + "</div></article>";
   }
 
-  function renderPapers(publicRows, ownRows, reviewRows) {
+  function reportCard(report) {
+    var target = report.target_type === "paper"
+      ? '<p><b>Reported paper:</b> ' + escapeHtml(report.paper_title || "Paper title unavailable.") + "</p>"
+      : '<p><b>Paper:</b> ' + escapeHtml(report.paper_title || "Paper title unavailable.") +
+        '</p><p><b>Reported comment:</b> ' + escapeHtml(report.comment_body || "Comment text unavailable.") + "</p>";
+    return '<article class="paper-card" data-paper-report="' + escapeHtml(report.id) + '">' +
+      '<div class="paper-card-meta">' + escapeHtml(report.target_type === "paper" ? "Paper report" : "Comment report") +
+      ' · ' + escapeHtml(new Date(report.created_at).toLocaleDateString()) + "</div>" +
+      target +
+      '<p><b>Reason:</b> ' + escapeHtml(report.reason) + "</p>" +
+      '<p><b>Reporter note:</b> ' + escapeHtml(report.note || "No note provided.") + "</p>" +
+      '<label class="paper-field">Resolution note (optional)' +
+      '<textarea data-report-resolution-note rows="2" maxlength="500"></textarea></label>' +
+      '<div class="paper-review-actions"><button type="button" data-report-status="resolved">Resolve</button>' +
+      '<button type="button" data-report-status="dismissed">Dismiss</button></div></article>';
+  }
+
+  function renderPapers(publicRows, ownRows, reviewRows, reportState) {
     var publicList = dialog.querySelector("#published-papers");
     publicList.innerHTML = publicRows.length
       ? publicRows.map(function (paper) { return paperCard(paper, true); }).join("")
@@ -419,6 +438,63 @@
         ? reviewRows.map(reviewCard).join("")
         : '<p class="paper-muted">The review queue is empty.</p>';
     }
+
+    var reportSection = dialog.querySelector("#paper-report-section");
+    var reportList = dialog.querySelector("#paper-report-list");
+    reportSection.hidden = !reportState;
+    if (reportState) {
+      reportList.innerHTML = reportState.error
+        ? '<p class="paper-muted error">Could not load reports: ' + escapeHtml(reportState.error) + "</p>"
+        : reportState.rows.length
+          ? reportState.rows.map(reportCard).join("")
+          : '<p class="paper-muted">There are no open reports.</p>';
+    }
+  }
+
+  async function loadOpenReports() {
+    var result = await client().from("paper_reports")
+      .select("id,target_type,paper_id,comment_id,reason,note,created_at")
+      .eq("status", "open")
+      .order("created_at", { ascending: true });
+    if (result.error) throw result.error;
+    var reports = result.data || [];
+    if (!reports.length) return [];
+
+    var commentIds = reports.filter(function (report) {
+      return report.target_type === "comment" && report.comment_id;
+    }).map(function (report) { return report.comment_id; });
+    var comments = [];
+    if (commentIds.length) {
+      var commentResult = await client().from("paper_comments")
+        .select("id,paper_id,body")
+        .in("id", commentIds);
+      if (commentResult.error) throw commentResult.error;
+      comments = commentResult.data || [];
+    }
+
+    var paperIds = reports.filter(function (report) {
+      return report.target_type === "paper" && report.paper_id;
+    }).map(function (report) { return report.paper_id; });
+    paperIds = paperIds.concat(comments.map(function (comment) { return comment.paper_id; }));
+    paperIds = paperIds.filter(function (id, index) { return paperIds.indexOf(id) === index; });
+    var paperTitles = {};
+    if (paperIds.length) {
+      var paperResult = await client().from("papers").select("id,title").in("id", paperIds);
+      if (paperResult.error) throw paperResult.error;
+      (paperResult.data || []).forEach(function (paper) {
+        paperTitles[paper.id] = paper.title;
+      });
+    }
+    var commentsById = {};
+    comments.forEach(function (comment) { commentsById[comment.id] = comment; });
+    return reports.map(function (report) {
+      var comment = report.comment_id && commentsById[report.comment_id];
+      var paperId = report.paper_id || (comment && comment.paper_id);
+      return Object.assign({}, report, {
+        paper_title: paperTitles[paperId],
+        comment_body: comment && comment.body
+      });
+    });
   }
 
   async function loadPapers() {
@@ -432,6 +508,7 @@
 
       var ownRows = [];
       var reviewRows = null;
+      var reportState = null;
       if (session) {
         var ownResult = await client().from("papers").select(PRIVATE_FIELDS)
           .eq("author_id", userId).order("updated_at", { ascending: false });
@@ -444,12 +521,18 @@
         } else {
           var queueResult = reviewerResult;
           reviewRows = queueResult.data || [];
+          reportState = { rows: [], error: "" };
+          try {
+            reportState.rows = await loadOpenReports();
+          } catch (reportError) {
+            reportState.error = reportError.message || "Supabase request failed.";
+          }
         }
       }
       if (version !== loadVersion || userId !== (session && session.user.id)) return;
       papers = ownRows.concat(reviewRows || []);
-      renderPapers(publicResult.data || [], ownRows, reviewRows);
-      setStatus("");
+      renderPapers(publicResult.data || [], ownRows, reviewRows, reportState);
+      setStatus(reportState && reportState.error ? "Could not load reports: " + reportState.error : "");
     } catch (error) {
       if (version !== loadVersion) return;
       setStatus("Could not load papers: " + (error.message || "Supabase request failed."), true);
@@ -629,6 +712,9 @@
       '<section><h2>Abstract</h2><p class="paper-abstract">' +
       escapeHtml(paper.abstract || "No abstract was provided.") + '</p></section>' +
       paperEngagementMarkup(paper, detailEngagement) +
+      '<button type="button" class="paper-action" data-report-paper="' + escapeHtml(paper.id) +
+      '"' + (session ? "" : " hidden") + '>Report</button>' +
+      '<div data-paper-report-feedback="' + escapeHtml(paper.id) + '" class="paper-status-message" role="status" aria-live="polite"></div>' +
       '<button type="button" class="pri" data-download="' + escapeHtml(paper.id) + '">Open PDF</button>' +
       '<p id="paper-detail-status" class="paper-status-message" role="status" aria-live="polite">' +
       escapeHtml(profileError) + '</p>' +
@@ -877,6 +963,165 @@
     }
   }
 
+  async function openReportForm(targetType, targetId, trigger) {
+    var activeSession = await requireActiveSession();
+    if (!activeSession) return;
+    var host = trigger.parentElement;
+    if (!host) return;
+    var feedback = host.querySelector("[data-paper-report-feedback]");
+    if (!feedback) {
+      feedback = document.createElement("div");
+      feedback.className = "paper-status-message";
+      feedback.setAttribute("role", "status");
+      feedback.setAttribute("aria-live", "polite");
+      host.appendChild(feedback);
+    }
+    feedback.classList.remove("error");
+    feedback.textContent = "Checking your previous reports…";
+    try {
+      var targetColumn = targetType === "paper" ? "paper_id" : "comment_id";
+      var existing = await client().from("paper_reports").select("id")
+        .eq("reporter_id", activeSession.user.id)
+        .eq(targetColumn, targetId)
+        .maybeSingle();
+      if (existing.error) throw existing.error;
+      if (existing.data) {
+        feedback.textContent = "Thanks for helping keep the community safe — you’ve already reported this " +
+          (targetType === "paper" ? "paper." : "comment.");
+        return;
+      }
+      feedback.textContent = "";
+      var form = host.querySelector("[data-paper-report-form]");
+      if (!form) {
+        form = document.createElement("form");
+        form.className = "paper-comment-form";
+        form.setAttribute("data-paper-report-form", "");
+        form.setAttribute("data-report-target-type", targetType);
+        form.setAttribute("data-report-target-id", targetId);
+        form.innerHTML = '<label class="paper-field">Reason<select data-report-reason required>' +
+          '<option value="">Choose a reason</option><option value="spam">Spam</option>' +
+          '<option value="abuse">Abuse</option><option value="plagiarism">Plagiarism</option>' +
+          '<option value="other">Other</option></select></label>' +
+          '<label class="paper-field">Note (optional)<textarea data-report-note rows="2" maxlength="2000"></textarea></label>' +
+          '<div class="row"><button type="submit" class="pri">Submit report</button>' +
+          '<button type="button" data-report-cancel>Cancel</button></div>';
+        host.appendChild(form);
+      }
+    } catch (error) {
+      feedback.textContent = "Could not check previous reports: " + (error.message || "Supabase request failed.");
+      feedback.classList.add("error");
+    }
+  }
+
+  async function submitReport(event) {
+    var form = event.target.closest("[data-paper-report-form]");
+    if (!form) return;
+    event.preventDefault();
+    var activeSession = await requireActiveSession();
+    if (!activeSession) return;
+    var reason = form.querySelector("[data-report-reason]").value;
+    var note = String(form.querySelector("[data-report-note]").value || "").trim();
+    var host = form.parentElement;
+    var feedback = host.querySelector("[data-paper-report-feedback]");
+    if (!feedback) {
+      feedback = document.createElement("div");
+      feedback.className = "paper-status-message";
+      feedback.setAttribute("role", "status");
+      host.appendChild(feedback);
+    }
+    if (!["spam", "abuse", "plagiarism", "other"].includes(reason)) {
+      feedback.textContent = "Choose a reason for the report.";
+      feedback.classList.add("error");
+      return;
+    }
+    try {
+      var targetType = form.dataset.reportTargetType;
+      var targetId = form.dataset.reportTargetId;
+      var report = {
+        reporter_id: activeSession.user.id,
+        target_type: targetType,
+        reason: reason,
+        note: note || null
+      };
+      report[targetType === "paper" ? "paper_id" : "comment_id"] = targetId;
+      var result = await client().from("paper_reports").insert(report);
+      if (result.error) {
+        if (result.error.code === "23505") {
+          feedback.textContent = "Thanks for helping keep the community safe — you’ve already reported this " +
+            (targetType === "paper" ? "paper." : "comment.");
+          feedback.classList.remove("error");
+          form.remove();
+          return;
+        }
+        throw result.error;
+      }
+      feedback.textContent = "Thank you. Your report has been submitted for review.";
+      feedback.classList.remove("error");
+      form.remove();
+    } catch (error) {
+      feedback.textContent = "Could not submit the report: " + (error.message || "Supabase request failed.");
+      feedback.classList.add("error");
+    }
+  }
+
+  async function resolveReport(event) {
+    var button = event.target.closest("[data-report-status]");
+    if (!button || busy) return;
+    var card = button.closest("[data-paper-report]");
+    if (!card || !session || !session.user) return;
+    var resolutionNote = String(card.querySelector("[data-report-resolution-note]").value || "").trim();
+    try {
+      setBusy(true);
+      var result = await client().from("paper_reports").update({
+        status: button.dataset.reportStatus,
+        resolution_note: resolutionNote || null,
+        resolved_by: session.user.id,
+        resolved_at: new Date().toISOString()
+      }).eq("id", card.dataset.paperReport).eq("status", "open").select("id").maybeSingle();
+      if (result.error) throw result.error;
+      if (!result.data) throw new Error("This report is no longer open.");
+      setStatus(button.dataset.reportStatus === "resolved" ? "Report resolved." : "Report dismissed.");
+      await loadPapers();
+    } catch (error) {
+      setStatus("Could not update the report: " + (error.message || "Request failed."), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleReportClick(event) {
+    var reportButton = event.target.closest("[data-report-paper], [data-report-comment]");
+    if (reportButton) {
+      var targetType = reportButton.hasAttribute("data-report-paper") ? "paper" : "comment";
+      var targetId = targetType === "paper" ? reportButton.dataset.reportPaper : reportButton.dataset.reportComment;
+      openReportForm(targetType, targetId, reportButton);
+      return true;
+    }
+    var cancelButton = event.target.closest("[data-report-cancel]");
+    if (cancelButton) {
+      var form = cancelButton.closest("[data-paper-report-form]");
+      if (form) form.remove();
+      var feedback = cancelButton.closest(".paper-comment, .paper-detail, .paper-engagement");
+      if (feedback) {
+        var statusElement = feedback.querySelector("[data-paper-report-feedback]");
+        if (statusElement) statusElement.textContent = "";
+      }
+      return true;
+    }
+    return false;
+  }
+
+  async function handleReportSubmit(event) {
+    if (event.target.closest("[data-paper-report-form]")) await submitReport(event);
+  }
+
+  async function refreshVisibleCommentThreads() {
+    var boxes = document.querySelectorAll(".paper-comment-box:not([hidden])");
+    await Promise.all(Array.prototype.map.call(boxes, function (box) {
+      return loadCommentThread(box.dataset.paperCommentBox, box);
+    }));
+  }
+
   function createInterface() {
     topBar = document.querySelector(".top");
     wrap = document.querySelector(".wrap");
@@ -932,6 +1177,9 @@
       '<section id="paper-review-section" hidden><h3>Admin review queue</h3>' +
       '<p class="paper-muted">Staff actions and feedback are recorded with each paper.</p>' +
       '<div id="paper-review-queue" class="paper-list"></div></section>' +
+      '<section id="paper-report-section" hidden><h3>Reports</h3>' +
+      '<p class="paper-muted">Open paper and comment reports for reviewer action.</p>' +
+      '<div id="paper-report-list" class="paper-list"></div></section>' +
       '<p id="paper-status" class="paper-status-message" role="status" aria-live="polite"></p></div></dialog>';
     document.body.appendChild(root);
     dialog = document.getElementById("papers-dialog");
@@ -950,12 +1198,14 @@
       loadFeedPage(false);
     });
     feedView.addEventListener("click", function (event) {
+      if (handleReportClick(event)) return;
       var paperLink = event.target.closest("[data-paper-detail]");
       if (paperLink) {
         event.preventDefault();
         openPaper(paperLink.dataset.paperDetail, true);
       }
     });
+    feedView.addEventListener("submit", handleReportSubmit);
     document.getElementById("paper-close").addEventListener("click", function () {
       dialog.close();
     });
@@ -979,6 +1229,10 @@
       dialog.querySelector("#paper-cancel-edit").hidden = true;
     });
     dialog.addEventListener("click", function (event) {
+      if (event.target.closest("[data-report-status]")) {
+        resolveReport(event);
+        return;
+      }
       var editButton = event.target.closest("[data-edit]");
       if (editButton) {
         editPaper(editButton.dataset.edit);
@@ -993,6 +1247,7 @@
       reviewPaper(event);
     });
     paperView.addEventListener("click", function (event) {
+      if (handleReportClick(event)) return;
       var backButton = event.target.closest("[data-paper-back]");
       if (backButton) {
         if (window.history.state && window.history.state.privcPaper) window.history.back();
@@ -1011,11 +1266,16 @@
       var downloadButton = event.target.closest("[data-download]");
       if (downloadButton) downloadPdf(downloadButton.dataset.download, detailStatus);
     });
+    paperView.addEventListener("submit", handleReportSubmit);
     window.addEventListener("popstate", handlePaperRoute);
 
     window.addEventListener("privc:authchange", function (event) {
       session = event.detail && event.detail.session || null;
       loadVersion++;
+      paperView.querySelectorAll("[data-report-paper]").forEach(function (button) {
+        button.hidden = !session;
+      });
+      refreshVisibleCommentThreads();
       var accountSection = dialog.querySelector("#paper-account-section");
       var uploadSection = dialog.querySelector("#paper-upload-section");
       accountSection.hidden = !session;
