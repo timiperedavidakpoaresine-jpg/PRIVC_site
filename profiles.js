@@ -10,6 +10,8 @@
   var statusElement;
   var authMode = "signup";
   var recoveryMode = false;
+  var authChangeVersion = 0;
+  var profileRouteVersion = 0;
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -36,7 +38,7 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    document.querySelectorAll("#account-dialog button[type=submit],#profile-editor-form button[type=submit]")
+    document.querySelectorAll("#account-dialog button:not(#account-close),#profile-editor-form button:not(#profile-editor-cancel)")
       .forEach(function (button) { button.disabled = busy; });
   }
 
@@ -197,12 +199,16 @@
   async function submitAuth(event) {
     event.preventDefault();
     if (state.busy) return;
-    var form = event.currentTarget;
-    var email = document.getElementById("account-email").value.trim();
+    var emailInput = document.getElementById("account-email");
+    var email = emailInput.value.trim();
     var password = document.getElementById("account-password").value;
     try {
       setBusy(true);
       setStatus("");
+      if (!email || emailInput.validity.typeMismatch) {
+        throw new Error("Enter a valid email address.");
+      }
+      if (!password) throw new Error("Enter your password.");
       if (authMode === "signup") {
         var username = document.getElementById("account-username").value.trim().toLowerCase();
         var displayName = document.getElementById("account-display-name").value.trim();
@@ -231,10 +237,12 @@
   }
 
   async function resetPassword() {
-    var email = document.getElementById("account-email").value.trim();
-    if (!email) {
-      setStatus("Enter your email address first.", true);
-      document.getElementById("account-email").focus();
+    if (state.busy) return;
+    var emailInput = document.getElementById("account-email");
+    var email = emailInput.value.trim();
+    if (!email || emailInput.validity.typeMismatch) {
+      setStatus("Enter a valid email address first.", true);
+      emailInput.focus();
       return;
     }
     try {
@@ -250,6 +258,7 @@
   }
 
   async function updatePassword() {
+    if (state.busy) return;
     var password = document.getElementById("account-new-password").value;
     if (password.length < 8) {
       setStatus("Use a new password with at least 8 characters.", true);
@@ -271,6 +280,7 @@
   }
 
   async function oauthLogin(provider) {
+    if (state.busy) return;
     try {
       setBusy(true);
       var result = await window.PRIVC_AUTH.signInWithProvider(provider);
@@ -283,6 +293,7 @@
   }
 
   async function logout() {
+    if (state.busy) return;
     try {
       setBusy(true);
       var result = await window.PRIVC_AUTH.signOut();
@@ -296,6 +307,7 @@
   }
 
   async function deleteAccount() {
+    if (state.busy) return;
     var confirmation = window.confirm("Permanently delete your PRIVC Atlas account and profile? This cannot be undone.");
     if (!confirmation) return;
     try {
@@ -314,7 +326,10 @@
 
   async function onAuthChange(event) {
     var detail = event.detail || {};
+    var previousUserId = state.session && state.session.user && state.session.user.id;
     state.session = detail.session;
+    var userId = state.session && state.session.user && state.session.user.id;
+    var changeVersion = ++authChangeVersion;
     var accountButton = document.getElementById("account-open");
     var globalSignOut = document.getElementById("so");
     if (accountButton) accountButton.textContent = state.session ? "My account" : "Sign in / Join";
@@ -329,17 +344,22 @@
       if (chip) chip.textContent = "Guest · Free Atlas";
       document.getElementById("account-greeting").textContent = "";
       if (detail.event === "UNAVAILABLE") setStatus(detail.error.message, true);
+      if (state.route && previousUserId !== userId) handleProfileRoute();
       return;
     }
     try {
-      state.profile = await getProfileById(state.session.user.id);
+      var profile = await getProfileById(state.session.user.id);
+      if (changeVersion !== authChangeVersion) return;
+      state.profile = profile;
       document.getElementById("account-greeting").textContent =
         "Signed in as " + (state.profile ? state.profile.display_name : state.session.user.email || "researcher");
       if (!state.profile) setStatus("Signed in, but the profile is not ready. Apply the reviewed profiles migration.", true);
       var chipText = document.getElementById("chip");
       if (chipText) chipText.textContent = "Researcher · " +
         (state.profile ? "@" + state.profile.username : state.session.user.email);
+      if (state.route && previousUserId !== userId) handleProfileRoute();
     } catch (error) {
+      if (changeVersion !== authChangeVersion) return;
       setStatus("Signed in, but profile loading failed: " + error.message, true);
     }
   }
@@ -425,8 +445,7 @@
         research_interests: document.getElementById("profile-interests").value.split(",")
           .map(function (item) { return item.trim(); }).filter(Boolean),
         bio: document.getElementById("profile-bio").value.trim(),
-        is_public: document.getElementById("profile-public").checked,
-        updated_at: new Date().toISOString()
+        is_public: document.getElementById("profile-public").checked
       });
       document.getElementById("profile-editor-dialog").close();
       document.getElementById("account-greeting").textContent = "Signed in as " + state.profile.display_name;
@@ -451,6 +470,7 @@
   }
 
   function leaveProfileRoute() {
+    profileRouteVersion++;
     state.route = false;
     profileView.hidden = true;
     profileView.innerHTML = "";
@@ -465,6 +485,7 @@
   async function openProfile(username, pushState) {
     var normalized = String(username || "").toLowerCase();
     if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(normalized)) return;
+    var routeVersion = ++profileRouteVersion;
     hideSiteForProfile();
     profileView.innerHTML = '<div class="account-muted" role="status">Loading profile…</div>';
     var path = profileHref(normalized);
@@ -472,6 +493,7 @@
     window.scrollTo(0, 0);
     try {
       var profile = await getProfileByUsername(normalized);
+      if (routeVersion !== profileRouteVersion) return;
       if (!profile) {
         profileView.innerHTML = '<button type="button" data-profile-back>Back to Atlas</button>' +
           '<div class="profile-private">This profile is private or could not be found.</div>';
@@ -518,6 +540,7 @@
       var editButton = profileView.querySelector("[data-profile-edit]");
       if (editButton) editButton.addEventListener("click", editProfile);
     } catch (error) {
+      if (routeVersion !== profileRouteVersion) return;
       profileView.innerHTML = '<button type="button" data-profile-back>Back to Atlas</button>' +
         '<div class="profile-private">Profile could not be loaded: ' + escapeHtml(error.message) + "</div>";
       profileView.querySelector("[data-profile-back]").addEventListener("click", function () {

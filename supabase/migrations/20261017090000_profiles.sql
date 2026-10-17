@@ -52,8 +52,35 @@ grant insert (
 ) on table public.profiles to authenticated;
 grant update (
   username, display_name, affiliation, country, bio, research_interests,
-  orcid, website, avatar_url, is_public, updated_at
+  orcid, website, avatar_url, is_public
 ) on table public.profiles to authenticated;
+
+create or replace function public.privc_set_profile_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  new.updated_at := pg_catalog.now();
+  return new;
+end
+$function$;
+revoke all on function public.privc_set_profile_updated_at() from public, anon, authenticated;
+
+do $migration$
+begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.profiles'::regclass
+      and tgname = 'privc_set_profile_updated_at'
+      and not tgisinternal
+  ) then
+    create trigger privc_set_profile_updated_at
+      before update on public.profiles
+      for each row execute function public.privc_set_profile_updated_at();
+  end if;
+end
+$migration$;
 
 do $migration$
 begin
@@ -122,13 +149,24 @@ begin
           profile_username := 'member-' || left(replace(new.id::text, '-', ''), 12);
         end if;
 
-        insert into public.profiles (id, username, display_name)
-        values (
-          new.id,
-          profile_username,
-          coalesce(nullif(btrim(new.raw_user_meta_data ->> 'display_name'), ''), profile_username)
-        )
-        on conflict do nothing;
+        begin
+          insert into public.profiles (id, username, display_name)
+          values (
+            new.id,
+            profile_username,
+            coalesce(nullif(btrim(new.raw_user_meta_data ->> 'display_name'), ''), profile_username)
+          )
+          on conflict (id) do nothing;
+        exception when unique_violation then
+          profile_username := 'member-' || left(replace(new.id::text, '-', ''), 25);
+          insert into public.profiles (id, username, display_name)
+          values (
+            new.id,
+            profile_username,
+            coalesce(nullif(btrim(new.raw_user_meta_data ->> 'display_name'), ''), profile_username)
+          )
+          on conflict (id) do nothing;
+        end;
 
         return new;
       end
