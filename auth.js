@@ -26,7 +26,7 @@
 
   function siteBasePath() {
     var path = window.location.pathname;
-    var routed = path.match(/^(.*\/)(?:u\/[^/]+|auth\/callback)\/?$/);
+    var routed = path.match(/^(.*\/)(?:u\/[^/]+|papers(?:\/[^/]+)?|auth\/callback)\/?$/);
     if (routed) return routed[1] || "/";
     if (/\/index\.html$/i.test(path)) return path.slice(0, path.lastIndexOf("/") + 1);
     if (path.endsWith("/")) return path;

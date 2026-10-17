@@ -58,6 +58,19 @@ PAPER SUBMISSION AND REVIEW (PHASE 2; NOT YET ENABLED IN SUPABASE)
   Revisions requested, resubmission, Published and Rejected. Confirm only Published papers appear signed out and their
   PDF links expire after five minutes.
 
+PAPER FEED, SEARCH AND PUBLIC PAPER PAGES (PHASE 3; SQL NOT RUN)
+- The additive migration is supabase/migrations/20261017130000_paper_feed.sql. Review it before applying; it adds
+  publication year and view counts and creates a guarded function to record views of Published papers. It is not
+  applied automatically and must be run only after reviewing the SQL.
+- The Papers button opens the public feed. Search covers loaded paper titles, abstracts, topics, authors and years;
+  use Load more papers to include older entries. Each card links to a public paper page and, when the author's
+  profile is public, shows their name and photo linked to that profile.
+- A paper page shows its abstract, topics, publication year, view count, a signed PDF link, and more published
+  papers from the same author. Direct /papers and /papers/<paper-id> links use the Netlify and Vercel rewrites.
+  Locally, open the feed with the Papers button; direct-link refreshes require a host with rewrites.
+- Paper drafts and submissions now include a publication year. Existing papers receive a year from published_at,
+  or created_at when they have not yet been published.
+
 HOW TO UPDATE THE SITE WITHOUT DRAGGING FILES TO NETLIFY EVERY TIME
 - Host on GitHub Pages (free, no deploy limits): GitHub repo > Settings > Pages > Deploy from branch > main / root.
 - To update: GitHub > your repo > Add file > Upload files > choose the new index.html (same name) > Commit.

@@ -3,15 +3,26 @@
 
   var BUCKET = "privc-papers";
   var MAX_PDF_BYTES = 25 * 1024 * 1024;
-  var PUBLIC_FIELDS = "id,title,abstract,keywords,status,created_at,published_at";
-  var PRIVATE_FIELDS = "id,author_id,title,abstract,keywords,status,pdf_path,review_feedback,submitted_at,reviewed_at,reviewed_by,published_at,created_at,updated_at";
+  var PUBLIC_FIELDS = "id,author_id,title,abstract,keywords,status,publication_year,view_count,created_at,published_at";
+  var PRIVATE_FIELDS = "id,author_id,title,abstract,keywords,status,publication_year,view_count,pdf_path,review_feedback,submitted_at,reviewed_at,reviewed_by,published_at,created_at,updated_at";
   var session = null;
   var papers = [];
   var loadVersion = 0;
+  var feedRows = [];
+  var feedAuthors = {};
+  var feedOffset = 0;
+  var feedHasMore = true;
+  var feedLoading = false;
+  var routeVersion = 0;
   var busy = false;
   var editingPaper = null;
+  var topBar;
+  var wrap;
   var dialog;
   var status;
+  var feedView;
+  var paperView;
+  var detailStatus;
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -33,6 +44,57 @@
   function setStatus(message, isError) {
     status.textContent = message || "";
     status.classList.toggle("error", Boolean(isError));
+  }
+
+  function routeBase() {
+    return window.PRIVC_AUTH ? window.PRIVC_AUTH.siteBasePath() : "/";
+  }
+
+  function paperPath(id) {
+    return routeBase() + "papers/" + encodeURIComponent(id);
+  }
+
+  function authorHref(profile) {
+    return routeBase() + "u/" + encodeURIComponent(profile.username);
+  }
+
+  function publicAuthorMarkup(paper) {
+    var author = feedAuthors[paper.author_id];
+    if (!author) return '<div class="paper-author"><span class="paper-author-avatar" aria-hidden="true">?</span>' +
+      '<span>Researcher</span></div>';
+    var name = escapeHtml(author.display_name || author.username);
+    var avatar = "";
+    try {
+      var url = new URL(author.avatar_url || "", window.location.href);
+      if ((url.protocol === "https:" || url.protocol === "http:") && author.avatar_url) {
+        avatar = '<img src="' + escapeHtml(url.href) + '" alt="">';
+      }
+    } catch (error) {
+      avatar = "";
+    }
+    var contents = '<span class="paper-author-avatar">' + (avatar || escapeHtml(
+      String(author.display_name || author.username || "?").trim().slice(0, 1).toUpperCase())) +
+      '</span><span>' + name + '</span>';
+    return author.username
+      ? '<a class="paper-author" href="' + escapeHtml(authorHref(author)) +
+        '" data-profile-username="' + escapeHtml(author.username) + '">' + contents + '</a>'
+      : '<div class="paper-author">' + contents + '</div>';
+  }
+
+  function publicPaperCard(paper) {
+    return '<article class="paper-card paper-feed-card">' +
+      '<div class="paper-feed-byline">' + publicAuthorMarkup(paper) +
+      '<span class="paper-card-meta">' + escapeHtml(paper.publication_year || "Year not set") +
+      ' · ' + escapeHtml(Number(paper.view_count || 0).toLocaleString()) + ' views</span></div>' +
+      '<h3><a href="' + escapeHtml(paperPath(paper.id)) + '" data-paper-detail="' +
+      escapeHtml(paper.id) + '">' + escapeHtml(paper.title) + '</a></h3>' +
+      (paper.abstract ? '<p class="paper-abstract paper-feed-abstract">' +
+        escapeHtml(paper.abstract) + '</p>' : "") +
+      (paper.keywords && paper.keywords.length
+        ? '<p class="paper-keywords"><b>Topics:</b> ' +
+          escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
+      '<a class="paper-open-link" href="' + escapeHtml(paperPath(paper.id)) +
+      '" data-paper-detail="' + escapeHtml(paper.id) + '">View paper</a></article>';
   }
 
   function setBusy(value) {
@@ -156,6 +218,237 @@
     }
   }
 
+  async function loadPublicProfiles(ids) {
+    var uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (!uniqueIds.length) return {};
+    var result = await client().from("profiles")
+      .select("id,username,display_name,avatar_url,is_public")
+      .in("id", uniqueIds).eq("is_public", true);
+    if (result.error) throw result.error;
+    return (result.data || []).reduce(function (profiles, profile) {
+      profiles[profile.id] = profile;
+      return profiles;
+    }, {});
+  }
+
+  function filteredFeedRows() {
+    var query = feedView.querySelector("#paper-feed-search").value.trim().toLowerCase();
+    if (!query) return feedRows;
+    return feedRows.filter(function (paper) {
+      var author = feedAuthors[paper.author_id];
+      return [
+        paper.title, paper.abstract, (paper.keywords || []).join(" "),
+        paper.publication_year, author && author.display_name, author && author.username
+      ].join(" ").toLowerCase().includes(query);
+    });
+  }
+
+  function renderFeed() {
+    var list = feedView.querySelector("#paper-feed-list");
+    var rows = filteredFeedRows();
+    list.innerHTML = rows.length
+      ? rows.map(publicPaperCard).join("")
+      : '<p class="paper-muted">' + (feedRows.length
+        ? "No loaded papers match your search. Load more papers to search older results."
+        : "No published papers yet.") + "</p>";
+    feedView.querySelector("#paper-feed-more").hidden = !feedHasMore;
+  }
+
+  async function loadFeedPage(reset) {
+    if (feedLoading) return;
+    if (reset) {
+      feedRows = [];
+      feedAuthors = {};
+      feedOffset = 0;
+      feedHasMore = true;
+    }
+    if (!feedHasMore) return;
+    var version = routeVersion;
+    var button = feedView.querySelector("#paper-feed-more");
+    feedLoading = true;
+    button.disabled = true;
+    var feedStatus = feedView.querySelector("#paper-feed-status");
+    feedStatus.classList.remove("error");
+    feedStatus.textContent = "Loading published papers…";
+    try {
+      var result = await client().from("papers").select(PUBLIC_FIELDS)
+        .eq("status", "Published").order("published_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false }).range(feedOffset, feedOffset + 23);
+      if (result.error) throw result.error;
+      var rows = result.data || [];
+      var profiles = await loadPublicProfiles(rows.map(function (paper) { return paper.author_id; }));
+      if (version !== routeVersion) return;
+      feedAuthors = Object.assign(feedAuthors, profiles);
+      feedRows = feedRows.concat(rows);
+      feedOffset += rows.length;
+      feedHasMore = rows.length === 24;
+      renderFeed();
+      feedStatus.classList.remove("error");
+      feedStatus.textContent =
+        feedHasMore ? "Search covers loaded papers; load more to include older results." : "";
+    } catch (error) {
+      if (version !== routeVersion) return;
+      feedStatus.textContent =
+        "Could not load papers: " + (error.message || "Supabase request failed.");
+      feedStatus.classList.add("error");
+    } finally {
+      feedLoading = false;
+      button.disabled = false;
+    }
+  }
+
+  function hideForPaperRoute() {
+    Array.prototype.forEach.call(wrap.children, function (child) {
+      if (child !== topBar && child !== feedView && child !== paperView) {
+        if (!child.dataset.paperHidden) {
+          child.dataset.paperHidden = child.hidden ? "already-hidden" : "shown";
+        }
+        child.hidden = true;
+      }
+    });
+    feedView.hidden = true;
+    paperView.hidden = false;
+  }
+
+  function leavePaperRoute() {
+    routeVersion++;
+    feedView.hidden = true;
+    paperView.hidden = true;
+    paperView.innerHTML = "";
+    Array.prototype.forEach.call(wrap.children, function (child) {
+      if (child.dataset.paperHidden) {
+        child.hidden = child.dataset.paperHidden === "already-hidden";
+        delete child.dataset.paperHidden;
+      }
+    });
+  }
+
+  async function openPaper(id, pushState) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      return;
+    }
+    var version = ++routeVersion;
+    hideForPaperRoute();
+    paperView.innerHTML = '<div class="paper-page"><p class="paper-muted" role="status">Loading paper…</p></div>';
+    var path = paperPath(id);
+    if (pushState) window.history.pushState({ privcPaper: true }, "", path);
+    window.scrollTo(0, 0);
+    var result;
+    try {
+      result = await client().from("papers").select(PUBLIC_FIELDS)
+        .eq("id", id).eq("status", "Published").maybeSingle();
+      if (result.error) throw result.error;
+    } catch (error) {
+      if (version !== routeVersion) return;
+      paperView.innerHTML = '<div class="paper-page"><button type="button" data-paper-back>Back to papers</button>' +
+        '<p class="paper-muted error">Could not load the paper: ' +
+        escapeHtml(error.message || "Supabase request failed.") + "</p></div>";
+      return;
+    }
+    if (version !== routeVersion) return;
+    if (!result.data) {
+      paperView.innerHTML = '<div class="paper-page"><button type="button" data-paper-back>Back to papers</button>' +
+        '<p class="paper-muted">This published paper could not be found.</p></div>';
+      return;
+    }
+
+    var paper = result.data;
+    var profileError = "";
+    var authorMap = {};
+    try {
+      authorMap = await loadPublicProfiles([paper.author_id]);
+    } catch (error) {
+      profileError = "Author profile could not be loaded: " + (error.message || "Supabase request failed.");
+    }
+    if (version !== routeVersion) return;
+    feedAuthors = Object.assign(feedAuthors, authorMap);
+    var author = feedAuthors[paper.author_id];
+    paperView.innerHTML = '<div class="paper-page"><button type="button" data-paper-back>Back to papers</button>' +
+      '<article class="paper-detail"><div class="paper-feed-byline">' + publicAuthorMarkup(paper) +
+      '<span class="paper-card-meta">' + escapeHtml(paper.publication_year || "Year not set") +
+      ' · <span id="paper-detail-views">' + escapeHtml(Number(paper.view_count || 0).toLocaleString()) +
+      '</span> views</span></div><h1>' + escapeHtml(paper.title) + '</h1>' +
+      (paper.keywords && paper.keywords.length
+        ? '<p class="paper-keywords"><b>Topics:</b> ' + escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
+      '<section><h2>Abstract</h2><p class="paper-abstract">' +
+      escapeHtml(paper.abstract || "No abstract was provided.") + '</p></section>' +
+      '<button type="button" class="pri" data-download="' + escapeHtml(paper.id) + '">Open PDF</button>' +
+      '<p id="paper-detail-status" class="paper-status-message" role="status" aria-live="polite">' +
+      escapeHtml(profileError) + '</p>' +
+      '<section><h2>More from this author</h2><div id="paper-more-author" class="paper-list">' +
+      '<p class="paper-muted">Loading more papers…</p></div></section></article></div>';
+    detailStatus = paperView.querySelector("#paper-detail-status");
+    if (profileError) detailStatus.classList.add("error");
+
+    if (author && author.is_public) {
+      try {
+        var related = await client().from("papers").select(PUBLIC_FIELDS)
+          .eq("author_id", paper.author_id).eq("status", "Published").neq("id", paper.id)
+          .order("published_at", { ascending: false, nullsFirst: false }).limit(6);
+        if (related.error) throw related.error;
+        if (version !== routeVersion) return;
+        var relatedRows = related.data || [];
+        paperView.querySelector("#paper-more-author").innerHTML = relatedRows.length
+          ? relatedRows.map(publicPaperCard).join("")
+          : '<p class="paper-muted">No other published papers from this author yet.</p>';
+      } catch (error) {
+        if (version !== routeVersion) return;
+        paperView.querySelector("#paper-more-author").innerHTML =
+          '<p class="paper-muted error">Could not load more papers: ' +
+          escapeHtml(error.message || "Supabase request failed.") + "</p>";
+      }
+    } else {
+      paperView.querySelector("#paper-more-author").innerHTML =
+        '<p class="paper-muted">The author’s public profile is unavailable.</p>';
+    }
+
+    try {
+      var viewResult = await client().rpc("privc_record_paper_view", { p_paper_id: paper.id });
+      if (viewResult.error) throw viewResult.error;
+      if (version === routeVersion && paperView.querySelector("#paper-detail-views")) {
+        paperView.querySelector("#paper-detail-views").textContent =
+          Number(viewResult.data).toLocaleString();
+      }
+    } catch (error) {
+      if (version !== routeVersion) return;
+      detailStatus.textContent = [profileError,
+        "Could not update view count: " + (error.message || "Supabase request failed.")]
+        .filter(Boolean).join(" ");
+      detailStatus.classList.add("error");
+    }
+  }
+
+  function handlePaperRoute() {
+    var base = routeBase().replace(/\/$/, "");
+    var path = window.location.pathname.slice(base.length);
+    var match = path.match(/^\/?papers(?:\/([^/]+))?\/?$/);
+    if (!match) {
+      if (!feedView.hidden || !paperView.hidden) leavePaperRoute();
+      return;
+    }
+    if (match[1]) {
+      var id;
+      try { id = decodeURIComponent(match[1]); }
+      catch (error) { return; }
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+        routeVersion++;
+        hideForPaperRoute();
+        paperView.innerHTML = '<div class="paper-page"><button type="button" data-paper-back>Back to papers</button>' +
+          '<p class="paper-muted">This paper link is not valid.</p></div>';
+        return;
+      }
+      openPaper(id, false);
+      return;
+    }
+    routeVersion++;
+    hideForPaperRoute();
+    feedView.hidden = false;
+    paperView.hidden = true;
+    if (!feedRows.length) loadFeedPage(true);
+    else renderFeed();
+    window.scrollTo(0, 0);
+  }
+
   function resetForm() {
     editingPaper = null;
     dialog.querySelector("#paper-form").reset();
@@ -172,6 +465,7 @@
     dialog.querySelector("#paper-title").value = paper.title || "";
     dialog.querySelector("#paper-abstract").value = paper.abstract || "";
     dialog.querySelector("#paper-keywords").value = (paper.keywords || []).join(", ");
+    dialog.querySelector("#paper-year").value = paper.publication_year || "";
     dialog.querySelector("#paper-form-title").textContent =
       paper.status === "Draft" ? "Edit draft" : "Revise and resubmit";
     dialog.querySelector("#paper-save-draft").textContent = "Save changes";
@@ -208,6 +502,7 @@
     var title = dialog.querySelector("#paper-title").value.trim();
     var abstract = dialog.querySelector("#paper-abstract").value.trim();
     var keywords = keywordsFromInput(dialog.querySelector("#paper-keywords").value);
+    var publicationYear = Number(dialog.querySelector("#paper-year").value);
     var file = dialog.querySelector("#paper-pdf").files[0] || null;
     var submit = event.submitter && event.submitter.dataset.paperAction === "submit";
     if (!title || title.length > 240) {
@@ -218,19 +513,24 @@
       setStatus("The abstract must be 12,000 characters or fewer.", true);
       return;
     }
+    if (!Number.isInteger(publicationYear) || publicationYear < 1000 || publicationYear > 9999) {
+      setStatus("Enter a publication year between 1000 and 9999.", true);
+      return;
+    }
     try {
       setBusy(true);
       setStatus(editingPaper ? "Saving your changes…" : "Creating your draft…");
       var paper = editingPaper;
       if (paper) {
         var update = await client().from("papers").update({
-          title: title, abstract: abstract, keywords: keywords
+          title: title, abstract: abstract, keywords: keywords, publication_year: publicationYear
         }).eq("id", paper.id).select(PRIVATE_FIELDS).single();
         if (update.error) throw update.error;
         paper = update.data;
       } else {
         var insert = await client().from("papers").insert({
-          author_id: session.user.id, title: title, abstract: abstract, keywords: keywords
+          author_id: session.user.id, title: title, abstract: abstract, keywords: keywords,
+          publication_year: publicationYear
         }).select(PRIVATE_FIELDS).single();
         if (insert.error) throw insert.error;
         paper = insert.data;
@@ -261,7 +561,7 @@
     }
   }
 
-  async function downloadPdf(id) {
+  async function downloadPdf(id, output) {
     var tab = window.open("about:blank", "_blank");
     if (tab) tab.opener = null;
     try {
@@ -274,7 +574,9 @@
       else window.location.assign(result.data.url);
     } catch (error) {
       if (tab) tab.close();
-      setStatus("Could not open the PDF: " + (error.message || "Request failed."), true);
+      var target = output || status;
+      target.textContent = "Could not open the PDF: " + (error.message || "Request failed.");
+      target.classList.add("error");
     }
   }
 
@@ -303,16 +605,36 @@
   }
 
   function createInterface() {
-    var topBar = document.querySelector(".top");
-    var wrap = document.querySelector(".wrap");
+    topBar = document.querySelector(".top");
+    wrap = document.querySelector(".wrap");
     if (!topBar || !wrap) throw new Error("The PRIVC Atlas page shell could not be found.");
 
     var openButton = document.createElement("button");
     openButton.type = "button";
     openButton.id = "papers-open";
     openButton.textContent = "Papers";
-    openButton.setAttribute("aria-haspopup", "dialog");
+    openButton.setAttribute("aria-label", "Open the papers feed");
     topBar.appendChild(openButton);
+
+    feedView = document.createElement("section");
+    feedView.id = "paper-feed-page";
+    feedView.className = "paper-page";
+    feedView.hidden = true;
+    feedView.innerHTML = '<div class="paper-feed-head"><div><h1>Papers</h1>' +
+      '<p class="paper-muted">Published research from the PRIVC Atlas community.</p></div>' +
+      '<button type="button" id="paper-manage-open">Submit or manage papers</button></div>' +
+      '<label class="paper-field" for="paper-feed-search">Search papers, authors, topics or year' +
+      '<input id="paper-feed-search" type="search" autocomplete="off"></label>' +
+      '<p id="paper-feed-status" class="paper-status-message" role="status" aria-live="polite"></p>' +
+      '<div id="paper-feed-list" class="paper-list"></div>' +
+      '<button type="button" id="paper-feed-more">Load more papers</button>';
+    wrap.appendChild(feedView);
+
+    paperView = document.createElement("section");
+    paperView.id = "paper-detail-page";
+    paperView.className = "paper-route";
+    paperView.hidden = true;
+    wrap.appendChild(paperView);
 
     var root = document.createElement("div");
     root.innerHTML = '<dialog id="papers-dialog" class="papers-dialog" aria-labelledby="papers-title">' +
@@ -326,6 +648,7 @@
       '<form id="paper-form" novalidate><label class="paper-field">Title' +
       '<input id="paper-title" maxlength="240" required></label>' +
       '<label class="paper-field">Abstract<textarea id="paper-abstract" rows="5" maxlength="12000"></textarea></label>' +
+      '<label class="paper-field">Publication year<input id="paper-year" type="number" min="1000" max="9999" required></label>' +
       '<label class="paper-field">Keywords, separated by commas' +
       '<input id="paper-keywords" maxlength="1000"></label>' +
       '<label class="paper-field">PDF (maximum 25 MB)' +
@@ -342,8 +665,23 @@
     status = document.getElementById("paper-status");
 
     openButton.addEventListener("click", function () {
+      window.history.pushState({ privcPaper: true }, "", routeBase() + "papers");
+      handlePaperRoute();
+    });
+    feedView.querySelector("#paper-manage-open").addEventListener("click", function () {
       dialog.showModal();
       loadPapers();
+    });
+    feedView.querySelector("#paper-feed-search").addEventListener("input", renderFeed);
+    feedView.querySelector("#paper-feed-more").addEventListener("click", function () {
+      loadFeedPage(false);
+    });
+    feedView.addEventListener("click", function (event) {
+      var paperLink = event.target.closest("[data-paper-detail]");
+      if (paperLink) {
+        event.preventDefault();
+        openPaper(paperLink.dataset.paperDetail, true);
+      }
     });
     document.getElementById("paper-close").addEventListener("click", function () {
       dialog.close();
@@ -376,11 +714,31 @@
       }
       var downloadButton = event.target.closest("[data-download]");
       if (downloadButton) {
-        downloadPdf(downloadButton.dataset.download);
+        downloadPdf(downloadButton.dataset.download, status);
         return;
       }
       reviewPaper(event);
     });
+    paperView.addEventListener("click", function (event) {
+      var backButton = event.target.closest("[data-paper-back]");
+      if (backButton) {
+        if (window.history.state && window.history.state.privcPaper) window.history.back();
+        else {
+          window.history.replaceState(null, "", routeBase());
+          leavePaperRoute();
+        }
+        return;
+      }
+      var paperLink = event.target.closest("[data-paper-detail]");
+      if (paperLink) {
+        event.preventDefault();
+        openPaper(paperLink.dataset.paperDetail, true);
+        return;
+      }
+      var downloadButton = event.target.closest("[data-download]");
+      if (downloadButton) downloadPdf(downloadButton.dataset.download, detailStatus);
+    });
+    window.addEventListener("popstate", handlePaperRoute);
 
     window.addEventListener("privc:authchange", function (event) {
       session = event.detail && event.detail.session || null;
@@ -391,6 +749,7 @@
       uploadSection.hidden = !session;
       if (dialog.open) loadPapers();
     });
+    handlePaperRoute();
   }
 
   document.addEventListener("DOMContentLoaded", function () {
