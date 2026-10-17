@@ -75,12 +75,28 @@
       userSession = null;
     }
 
-    var likeResult = await client().rpc("privc_paper_like_count", { p_paper_id: paperId }).catch(function () {
-      return { data: 0 };
-    });
-    var commentResult = await client().rpc("privc_paper_comment_count", { p_paper_id: paperId }).catch(function () {
-      return { data: 0 };
-    });
+    async function loadCount(functionName, tableName) {
+      var result;
+      try {
+        result = await client().rpc(functionName, { p_paper_id: paperId });
+      } catch (error) {
+        result = { error: error };
+      }
+      if (!result || result.error) {
+        var fallback = await client().from(tableName).select("paper_id", {
+          count: "exact",
+          head: true
+        }).eq("paper_id", paperId);
+        if (fallback.error) throw fallback.error;
+        return Number(fallback.count || 0);
+      }
+      return Number(result.data || 0);
+    }
+
+    var counts = await Promise.all([
+      loadCount("privc_paper_like_count", "paper_likes"),
+      loadCount("privc_paper_comment_count", "paper_comments")
+    ]);
     var bookmarkResult = userSession
       ? await client().from("paper_bookmarks").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
       : { data: null, error: null };
@@ -88,8 +104,8 @@
       ? await client().from("paper_likes").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
       : { data: null, error: null };
     return {
-      like_count: Number((likeResult && likeResult.data) || 0),
-      comment_count: Number((commentResult && commentResult.data) || 0),
+      like_count: counts[0],
+      comment_count: counts[1],
       liked: !likeStateResult.error && Boolean(likeStateResult.data),
       bookmarked: !bookmarkResult.error && Boolean(bookmarkResult.data)
     };
