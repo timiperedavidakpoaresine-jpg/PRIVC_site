@@ -32,3 +32,25 @@
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .profile-page{background:linear-gradient(145deg,rgba(39,37,64,.94),rgba(24,43,63,.94));border-color:rgba(164,167,220,.24)}}
 :root[data-theme="dark"] .profile-page{background:linear-gradient(145deg,rgba(39,37,64,.94),rgba(24,43,63,.94));border-color:rgba(164,167,220,.24)}
 @media(max-width:560px){.account-fields,.profile-editor-fields{grid-template-columns:1fr}.account-dialog-inner,.profile-editor-dialog form{padding:16px}.profile-page-head{align-items:center;flex-direction:column;text-align:center}.profile-page-actions{justify-content:center}}
+#papers-open{white-space:nowrap}
+.papers-dialog{width:min(900px,calc(100vw - 24px));max-height:92vh;padding:0;border:1px solid #bfc3e3;border-radius:18px;background:var(--card);color:var(--ink);box-shadow:0 24px 80px #1115}
+.papers-dialog::backdrop{background:rgba(22,27,50,.55);backdrop-filter:blur(3px)}
+.papers-dialog-inner{padding:20px}
+.papers-head,.paper-card-head,.paper-form-actions,.paper-review-actions{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap}
+.papers-head h2,.papers-dialog h3{margin:0}
+.papers-dialog section{margin:18px 0}
+.paper-list{display:grid;gap:10px;margin-top:8px}
+.paper-card{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.paper-card h3{overflow-wrap:anywhere}
+.paper-status{font-size:12px;font-weight:600;color:var(--mut)}
+.paper-abstract{white-space:pre-wrap;overflow-wrap:anywhere}
+.paper-keywords,.paper-card-meta,.paper-muted{color:var(--mut);font-size:13px}
+.paper-feedback{padding:10px;border-left:3px solid #d6a84f;background:rgba(214,168,79,.12);white-space:pre-wrap}
+.paper-field{display:block;margin:12px 0;color:var(--mut);font-size:13px}
+.paper-field input,.paper-field textarea{display:block;width:100%;margin-top:5px}
+.paper-field textarea{resize:vertical}
+.paper-review-actions{justify-content:flex-start;margin-top:8px}
+.paper-status-message{min-height:22px;color:var(--mut);font-size:13px}
+.paper-status-message.error{color:var(--bad)}
+.papers-dialog [hidden]{display:none!important}
+@media(max-width:560px){.papers-dialog-inner{padding:16px}.paper-card-head{align-items:flex-start;flex-direction:column}}

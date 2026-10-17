@@ -39,6 +39,25 @@ COMMUNITY ACCOUNTS AND PROFILES (PHASE 1)
   The local guest workspace and the existing Atlas sections remain; cloud workspace, papers and engagement are later
   phases.
 
+PAPER SUBMISSION AND REVIEW (PHASE 2; NOT YET ENABLED IN SUPABASE)
+- The additive migration is supabase/migrations/20261017110000_papers_review.sql. It creates a papers table, a private
+  PDF bucket, row/storage policies and guarded submit/review functions. It contains no drop, truncate or delete
+  statements. Review it and compare it with the live database before choosing to run it; it has NOT been applied.
+- The public Papers button lists Published papers only. Signed-in authors can save Drafts, upload PDFs up to 25 MB,
+  submit papers, and resubmit after requested revisions. Reviewers can start review, request revisions, publish or
+  reject, with feedback required for revision requests and rejections.
+- Only profiles whose account_role is reviewer, publishing_team or admin can see the admin review queue. Assign these
+  roles only through a trusted Supabase administrator workflow; do not expose account_role editing to users.
+- Deploy supabase/functions/paper-pdf/ as an Edge Function with Verify JWT disabled (supabase/config.toml sets this
+  for CLI deployments). Configure SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY and ALLOWED_ORIGINS.
+  The function returns a five-minute signed PDF link only to the author, an authorized reviewer, or anyone requesting
+  a Published paper. Never expose the service-role key in browser configuration.
+- To test after reviewing and applying the migration: configure the function and allowed origin; create a test account;
+  upload a small PDF and save it as Draft; confirm the author can see it but a second account and a signed-out browser
+  cannot. Submit it, assign a test reviewer role through a trusted administrator path, then exercise In review,
+  Revisions requested, resubmission, Published and Rejected. Confirm only Published papers appear signed out and their
+  PDF links expire after five minutes.
+
 HOW TO UPDATE THE SITE WITHOUT DRAGGING FILES TO NETLIFY EVERY TIME
 - Host on GitHub Pages (free, no deploy limits): GitHub repo > Settings > Pages > Deploy from branch > main / root.
 - To update: GitHub > your repo > Add file > Upload files > choose the new index.html (same name) > Commit.

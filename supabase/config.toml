@@ -1,0 +1,2 @@
+[functions.paper-pdf]
+verify_jwt = false
