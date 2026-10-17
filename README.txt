@@ -20,6 +20,25 @@ REPORTS AND ARTICLES
 - Use a local static server (for example VS Code Live Server) to test: browsers do not fetch JSON files reliably from
   a file:// URL.
 
+COMMUNITY ACCOUNTS AND PROFILES (PHASE 1)
+- The additive migration is supabase/migrations/20261017090000_profiles.sql. Review it and its RLS policies before
+  running it in the existing Supabase project; it creates public.profiles linked to auth.users and does not replace
+  existing policies or rows.
+- config.js contains only the browser-safe Supabase URL and publishable key. Never put SUPABASE_SERVICE_ROLE_KEY in
+  config.js or any other browser file. Keep server-side values in your private environment and deploy
+  supabase/functions/delete-account/ with SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY and
+  ALLOWED_ORIGINS set as Edge Function secrets.
+- In Supabase Auth, enable email confirmation and add /auth/callback to allowed redirect URLs. Google and ORCID
+  sign-in buttons require their providers to be configured in Supabase first.
+- Public profile URLs use /u/username; _redirects and vercel.json provide the static-host rewrite. Photo URLs can be
+  set on a profile for now. Avatar upload policies are intentionally deferred until the existing Storage setup has
+  been inspected.
+- Direct profile URLs require host rewrites: Netlify/Cloudflare Pages use _redirects and Vercel uses vercel.json.
+  GitHub Pages does not support these rewrites, so use Netlify, Cloudflare Pages or Vercel for working /u/username links.
+- The old simulated sign-in/payment gate has been replaced by public guest browsing and real Supabase account flows.
+  The local guest workspace and the existing Atlas sections remain; cloud workspace, papers and engagement are later
+  phases.
+
 HOW TO UPDATE THE SITE WITHOUT DRAGGING FILES TO NETLIFY EVERY TIME
 - Host on GitHub Pages (free, no deploy limits): GitHub repo > Settings > Pages > Deploy from branch > main / root.
 - To update: GitHub > your repo > Add file > Upload files > choose the new index.html (same name) > Commit.
