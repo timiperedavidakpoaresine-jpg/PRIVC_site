@@ -111,6 +111,8 @@ details{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:
 .leaflet-zoom-animated{transform-origin:0 0}.leaflet-tile-pane{z-index:200}.leaflet-overlay-pane{z-index:400}.leaflet-marker-pane{z-index:600}
 #leg,#cur{z-index:7}.ms{border:1px dashed var(--line);border-radius:10px;padding:8px;margin-top:8px}
 </style>
+<link rel="stylesheet" href="reports.css">
+<script src="reports.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -1053,32 +1055,7 @@ function mrr(){
  $("mrt").onclick=function(){mrDl("model-race-template.csv",tpl)};$("mrgo").onclick=mrRun}
 
 // ===== Reports and articles =====
-var RPK="atlasReports",RP=[],RPR=[],RPO=null;
-function rpLoad(){try{RP=JSON.parse(localStorage.getItem(RPK)||"[]")}catch(e){RP=[]}}
-function rpSave(){try{localStorage.setItem(RPK,JSON.stringify(RP));return true}catch(e){alert("Browser storage is full. Use a smaller file or link to the file instead.");return false}}
-try{fetch("reports.json").then(function(r){return r.ok?r.json():[]}).then(function(j){RPR=Array.isArray(j)?j:[]}).catch(function(){})}catch(e){}
-function rpAll(){return RPR.map(function(x){return Object.assign({},x,{pub:1})}).concat(RP).sort(function(a,b){return(b.year-a.year)||(b.id-a.id)})}
-function rpDl(name,data,mime){var a=document.createElement("a");a.href=/^data:/.test(data)?data:URL.createObjectURL(new Blob([data],{type:mime||"text/plain"}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){a.remove()},500)}
-function rpHtml(r){return"<!doctype html><meta charset=utf-8><title>"+mrH(r.title)+"</title><body style=\"font:16px/1.6 Georgia,serif;max-width:700px;margin:30px auto;padding:0 14px\"><h1>"+mrH(r.title)+"</h1><p><i>"+mrH(r.type)+" · "+r.year+" · "+mrH(r.authors||"")+"</i></p><p><b>"+mrH(r.summary||"")+"</b></p>"+String(r.body||"").split(/\n\s*\n/).map(function(p){return"<p>"+mrH(p)+"</p>"}).join("")+"<hr><p>PRIVC Atlas</p>"}
-function rpList(){var t=$("rpt").value,q=$("rpq").value.trim().toLowerCase(),L=rpAll().filter(function(r){return(!t||r.type==t)&&(!q||(r.title+" "+r.authors+" "+r.year+" "+r.summary).toLowerCase().indexOf(q)>=0)});
- $("rplist").innerHTML=L.length?L.map(function(r){return'<div class="card"><div class="sub">'+mrH(r.type)+" · "+r.year+(r.pub?"":" · saved in this browser")+'</div><h3 style="margin:2px 0 4px">'+mrH(r.title)+'</h3><div class="sub">'+mrH(r.authors||"")+'</div><div style="margin:6px 0">'+mrH(r.summary||"")+'</div><div class="row"><button data-a="r" data-i="'+r.id+'">Read</button><button data-a="d" data-i="'+r.id+'">Download article</button>'+(r.file?'<button data-a="f" data-i="'+r.id+'">Download '+mrH(r.file.name||"file")+'</button>':"")+(r.url?'<a class="btn" href="'+mrH(r.url)+'" target="_blank" rel="noopener">Open file link</a>':"")+(r.pub?"":'<button data-a="x" data-i="'+r.id+'">Delete</button>')+'</div></div>'}).join(""):'<div class="card sub">Nothing published yet. Use "Write or publish" to add the first report or article.</div>';
- $("rplist").querySelectorAll("button[data-a]").forEach(function(b){b.onclick=function(){var r=rpAll().filter(function(x){return String(x.id)==b.dataset.i})[0];if(!r)return;var a=b.dataset.a;
-  if(a=="r"){$("rpread").innerHTML='<div class="card"><div class="sub">'+mrH(r.type)+" · "+r.year+'</div><h2>'+mrH(r.title)+'</h2><div class="sub">'+mrH(r.authors||"")+'</div><p><b>'+mrH(r.summary||"")+'</b></p>'+String(r.body||"").split(/\n\s*\n/).map(function(p){return"<p>"+mrH(p)+"</p>"}).join("")+'<button id="rpc">Close</button></div>';$("rpc").onclick=function(){$("rpread").innerHTML=""};window.scrollTo(0,0)}
-  else if(a=="d")rpDl(r.title.replace(/[^\w]+/g,"-")+".html",rpHtml(r),"text/html");else if(a=="f")rpDl(r.file.name,r.file.data);
-  else if(a=="x"&&confirm("Delete this entry from this browser?")){RP=RP.filter(function(x){return x.id!=r.id});rpSave();rpList()}}})}
-function rpr(){rpLoad();var T=["Annual report","Article","Policy brief","Technical note"];
- $("rpv").innerHTML='<div class="card"><h2>Reports and articles</h2><div class="sub">Annual development reports, articles, policy briefs and technical notes. Read them here or download them for analysis.</div><div class="row" style="margin-top:8px"><select id="rpt"><option value="">All types</option>'+T.map(function(t){return"<option>"+t+"</option>"}).join("")+'</select><input id="rpq" placeholder="Search title, author or year" style="flex:1;min-width:140px"><button class="pri" id="rpn">Write or publish</button></div></div><div id="rpread"></div>'+
- '<div class="card hide" id="rpf"><h3 style="margin-top:0">Publish a report or article</h3><label class="fld">Title<input id="rf1" style="width:100%"></label><div class="row"><label class="fld">Type<select id="rf2">'+T.map(function(t){return"<option>"+t+"</option>"}).join("")+'</select></label><label class="fld">Year<input id="rf3" type="number" style="width:90px" value="'+new Date().getFullYear()+'"></label></div><label class="fld">Authors<input id="rf4" style="width:100%"></label><label class="fld">Summary<textarea id="rf5" rows="2" style="width:100%"></textarea></label><label class="fld">Full text (leave a blank line between paragraphs)<textarea id="rf6" rows="9" style="width:100%"></textarea></label><label class="fld">Attach a PDF or data file (up to 1 MB)<input type="file" id="rf7"></label><label class="fld">Or link to a file<input id="rf8" style="width:100%" placeholder="https://..."></label><div class="row"><button class="pri" id="rf9">Publish</button><button id="rfc">Cancel</button></div><div class="sub" id="rfm"></div></div><div id="rplist"></div>'+
- '<div class="card"><h3 style="margin-top:0">Show reports to every visitor</h3><div class="sub">Published items are saved in this browser. To make them public, download reports.json and place it next to index.html, with any PDF files in the same folder, then link them. A database can replace this later.</div><div class="row" style="margin-top:6px"><button id="rpx">Download reports.json</button><button id="rpim">Import reports.json</button><input type="file" id="rpi" accept=".json" class="hide"></div></div>';
- $("rpt").onchange=$("rpq").oninput=rpList;$("rpn").onclick=function(){$("rpf").classList.toggle("hide")};$("rfc").onclick=function(){$("rpf").classList.add("hide")};
- $("rf9").onclick=function(){var ti=$("rf1").value.trim();if(!ti||!$("rf6").value.trim()&&!$("rf8").value.trim()&&!$("rf7").files[0]){$("rfm").textContent="Add a title and either the full text, a file or a link.";return}
-  var r={id:Date.now(),title:ti,type:$("rf2").value,year:+$("rf3").value||new Date().getFullYear(),authors:$("rf4").value.trim(),summary:$("rf5").value.trim(),body:$("rf6").value,url:$("rf8").value.trim()},f=$("rf7").files[0];
-  function done(){RP.unshift(r);if(rpSave()){$("rpf").classList.add("hide");["rf1","rf4","rf5","rf6","rf8","rf7"].forEach(function(i){$(i).value=""});rpList()}else RP.shift()}
-  if(f){if(f.size>1048576){$("rfm").textContent="That file is over 1 MB. Link to it instead.";return}var rd=new FileReader();rd.onload=function(){r.file={name:f.name,data:rd.result};done()};rd.readAsDataURL(f)}else done()};
- $("rpx").onclick=function(){rpDl("reports.json",JSON.stringify(rpAll().map(function(r){var c=Object.assign({},r);delete c.pub;return c}),null,1),"application/json")};
- $("rpim").onclick=function(){$("rpi").click()};$("rpi").onchange=function(){var f=this.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){try{var j=JSON.parse(rd.result);if(Array.isArray(j)){j.forEach(function(x){if(x&&x.title&&!RP.some(function(y){return y.id==x.id}))RP.push(x)});rpSave();rpList()}}catch(e){alert("That file is not valid reports.json")}};rd.readAsText(f)};
- rpList()}
-
+function rpr(){window.initReports()}
 // ===== Source citations added to every CSV download =====
 var SRCL={wb:"World Bank WDI",wgi:"World Bank WGI",undp:"UNDP HDR",hdr:"UNDP HDR",itu:"ITU DataHub",who:"WHO GHO",unesco:"UNESCO UIS","unesco uis":"UNESCO UIS",uis:"UNESCO UIS",ilo:"ILO ILOSTAT",wjp:"World Justice Project",unodc:"UNODC",sat:"Satellite (Earth Engine)",place:"OpenStreetMap",mr:"User data"};
 function srcLab(d){return SRCL[String(d[1]).toLowerCase()]||d[1]}

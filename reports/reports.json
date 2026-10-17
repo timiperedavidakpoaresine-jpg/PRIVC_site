@@ -1,0 +1,28 @@
+[
+  {
+    "id": "privc-sample-annual-2024",
+    "title": "PRIVC Atlas Development Indicators: 2024 Overview",
+    "authors": "PRIVC Atlas Research Team",
+    "year": 2024,
+    "type": "Annual report",
+    "summary": "A sample annual overview demonstrating how public reports appear in the catalogue.",
+    "tags": ["development", "indicators", "annual review"],
+    "status": "published",
+    "pdf": "",
+    "pdfName": "",
+    "body": "This sample entry demonstrates the reading view for a public report. Replace this example with your own reviewed findings before publishing.\n\nThe catalogue combines public reports with drafts stored only in the current browser. To publish a report for every visitor, export reports.json and deploy it with the site."
+  },
+  {
+    "id": "privc-sample-policy-brief-2025",
+    "title": "Using Development Indicators in Policy Briefs",
+    "authors": "PRIVC Atlas Editorial Team",
+    "year": 2025,
+    "type": "Policy brief",
+    "summary": "A sample policy brief showing tags, searchable metadata and direct report links.",
+    "tags": ["policy", "data use", "research"],
+    "status": "published",
+    "pdf": "",
+    "pdfName": "",
+    "body": "This sample policy brief illustrates the article reader. Use the title, authors, publication year and tags to make research easy to discover.\n\nWhen adding a PDF, place it in reports/pdf/ and enter its relative path, such as reports/pdf/brief.pdf."
+  }
+]

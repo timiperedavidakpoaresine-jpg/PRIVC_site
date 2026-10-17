@@ -1,13 +1,24 @@
 PRIVC ATLAS: WHAT YOU HAVE AND HOW TO KEEP IT UPDATED
 
 THE WHOLE PROJECT IS 2 DOWNLOADS
-1) PRIVC_site.zip     -> index.html. This single file IS the website (all pages, maps, catalogs, citations).
+1) PRIVC_site.zip     -> index.html, reports.js, reports.css, and the reports/ folder. These files together make
+   the static website (all pages, maps, catalogs, citations and the public reports catalogue).
 2) PRIVC_backend.zip  -> this folder. Set up once; it rarely changes. It holds:
      supabase/sql/        two SQL files (run once in Supabase)
      supabase/functions/  two small functions (wb-sync and provider-proxy)
      .github/workflows/   the scheduled jobs (monthly UNDP/ITU, weekly satellite)
      monthly-file-import/ and satellite-datasets/   the scripts those jobs run
-Keep both in ONE GitHub repository: index.html at the top level, and these folders next to it.
+Keep both in ONE GitHub repository: index.html, reports.js, reports.css, reports/, and the backend folders at top level.
+data/wb.json is an optional World Bank override; replace its placeholder only with a complete export newer than the
+built-in data.
+
+REPORTS AND ARTICLES
+- Public items are read from reports/reports.json. Put PDF files in reports/pdf/ and reference them by a relative path,
+  for example reports/pdf/annual-report.pdf.
+- Use Write or publish to create a browser-only draft. Export reports.json to merge those items; remove any draft
+  records you do not want public before committing/deploying the JSON and PDFs with the site. JSON contents are public.
+- Use a local static server (for example VS Code Live Server) to test: browsers do not fetch JSON files reliably from
+  a file:// URL.
 
 HOW TO UPDATE THE SITE WITHOUT DRAGGING FILES TO NETLIFY EVERY TIME
 - Host on GitHub Pages (free, no deploy limits): GitHub repo > Settings > Pages > Deploy from branch > main / root.
