@@ -74,8 +74,13 @@
     } catch (error) {
       userSession = null;
     }
-    var likeResult = await client().from("paper_likes").select("paper_id", { count: "exact" }).eq("paper_id", paperId);
-    var commentResult = await client().from("paper_comments").select("id", { count: "exact" }).eq("paper_id", paperId);
+
+    var likeResult = await client().rpc("privc_paper_like_count", { p_paper_id: paperId }).catch(function () {
+      return { data: 0 };
+    });
+    var commentResult = await client().rpc("privc_paper_comment_count", { p_paper_id: paperId }).catch(function () {
+      return { data: 0 };
+    });
     var bookmarkResult = userSession
       ? await client().from("paper_bookmarks").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
       : { data: null, error: null };
@@ -83,8 +88,8 @@
       ? await client().from("paper_likes").select("paper_id").eq("paper_id", paperId).eq("user_id", userSession.user.id).maybeSingle()
       : { data: null, error: null };
     return {
-      like_count: Number((likeResult && likeResult.count) || 0),
-      comment_count: Number((commentResult && commentResult.count) || 0),
+      like_count: Number((likeResult && likeResult.data) || 0),
+      comment_count: Number((commentResult && commentResult.data) || 0),
       liked: !likeStateResult.error && Boolean(likeStateResult.data),
       bookmarked: !bookmarkResult.error && Boolean(bookmarkResult.data)
     };
@@ -294,7 +299,8 @@
       : '<div class="paper-author">' + contents + '</div>';
   }
 
-  function publicPaperCard(paper) {
+  function publicPaperCard(paper, engagementState) {
+    var state = engagementState || { like_count: 0, comment_count: 0, liked: false, bookmarked: false };
     return '<article class="paper-card paper-feed-card">' +
       '<div class="paper-feed-byline">' + publicAuthorMarkup(paper) +
       '<span class="paper-card-meta">' + escapeHtml(paper.publication_year || "Year not set") +
@@ -306,7 +312,7 @@
       (paper.keywords && paper.keywords.length
         ? '<p class="paper-keywords"><b>Topics:</b> ' +
           escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
-      paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false }) +
+      paperEngagementMarkup(paper, state) +
       '<a class="paper-open-link" href="' + escapeHtml(paperPath(paper.id)) +
       '" data-paper-detail="' + escapeHtml(paper.id) + '">View paper</a></article>';
   }
@@ -459,15 +465,32 @@
     });
   }
 
-  function renderFeed() {
+  async function renderFeed() {
     var list = feedView.querySelector("#paper-feed-list");
     var rows = filteredFeedRows();
-    list.innerHTML = rows.length
-      ? rows.map(publicPaperCard).join("")
-      : '<p class="paper-muted">' + (feedRows.length
+    if (!rows.length) {
+      list.innerHTML = '<p class="paper-muted">' + (feedRows.length
         ? "No loaded papers match your search. Load more papers to search older results."
         : "No published papers yet.") + "</p>";
+      feedView.querySelector("#paper-feed-more").hidden = !feedHasMore;
+      return;
+    }
+    var hydratedRows = await Promise.all(rows.map(async function (paper) {
+      return {
+        paper: paper,
+        engagement: await loadPaperEngagement(paper.id)
+      };
+    }));
+    list.innerHTML = hydratedRows.map(function (entry) {
+      return publicPaperCard(entry.paper, entry.engagement);
+    }).join("");
     feedView.querySelector("#paper-feed-more").hidden = !feedHasMore;
+    hydratedRows.forEach(function (entry) {
+      var root = list.querySelector('[data-paper-engagement="' + entry.paper.id + '"]');
+      if (root) {
+        renderPaperEngagement(entry.paper.id, root.parentElement || root);
+      }
+    });
   }
 
   async function loadFeedPage(reset) {
@@ -498,7 +521,7 @@
       feedRows = feedRows.concat(rows);
       feedOffset += rows.length;
       feedHasMore = rows.length === 24;
-      renderFeed();
+      await renderFeed();
       feedStatus.classList.remove("error");
       feedStatus.textContent =
         feedHasMore ? "Search covers loaded papers; load more to include older results." : "";
@@ -579,6 +602,7 @@
     if (version !== routeVersion) return;
     feedAuthors = Object.assign(feedAuthors, authorMap);
     var author = feedAuthors[paper.author_id];
+    var detailEngagement = await loadPaperEngagement(paper.id);
     paperView.innerHTML = '<div class="paper-page"><button type="button" data-paper-back>Back to papers</button>' +
       '<article class="paper-detail"><div class="paper-feed-byline">' + publicAuthorMarkup(paper) +
       '<span class="paper-card-meta">' + escapeHtml(paper.publication_year || "Year not set") +
@@ -588,7 +612,7 @@
         ? '<p class="paper-keywords"><b>Topics:</b> ' + escapeHtml(paper.keywords.join(", ")) + "</p>" : "") +
       '<section><h2>Abstract</h2><p class="paper-abstract">' +
       escapeHtml(paper.abstract || "No abstract was provided.") + '</p></section>' +
-      paperEngagementMarkup(paper, { like_count: 0, comment_count: 0, liked: false, bookmarked: false }) +
+      paperEngagementMarkup(paper, detailEngagement) +
       '<button type="button" class="pri" data-download="' + escapeHtml(paper.id) + '">Open PDF</button>' +
       '<p id="paper-detail-status" class="paper-status-message" role="status" aria-live="polite">' +
       escapeHtml(profileError) + '</p>' +
@@ -605,9 +629,23 @@
         if (related.error) throw related.error;
         if (version !== routeVersion) return;
         var relatedRows = related.data || [];
-        paperView.querySelector("#paper-more-author").innerHTML = relatedRows.length
-          ? relatedRows.map(publicPaperCard).join("")
+        var relatedEngagement = await Promise.all(relatedRows.map(async function (paperItem) {
+          return {
+            paper: paperItem,
+            engagement: await loadPaperEngagement(paperItem.id)
+          };
+        }));
+        paperView.querySelector("#paper-more-author").innerHTML = relatedEngagement.length
+          ? relatedEngagement.map(function (entry) {
+              return publicPaperCard(entry.paper, entry.engagement);
+            }).join("")
           : '<p class="paper-muted">No other published papers from this author yet.</p>';
+        relatedEngagement.forEach(function (entry) {
+          var root = paperView.querySelector('[data-paper-engagement="' + entry.paper.id + '"]');
+          if (root) {
+            renderPaperEngagement(entry.paper.id, root.parentElement || root);
+          }
+        });
       } catch (error) {
         if (version !== routeVersion) return;
         paperView.querySelector("#paper-more-author").innerHTML =
