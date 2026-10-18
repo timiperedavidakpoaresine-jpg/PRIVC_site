@@ -978,38 +978,59 @@
     }
     feedback.classList.remove("error");
     feedback.textContent = "Checking your previous reports…";
+    var alreadyReported = false;
+    var timeoutId;
     try {
       var targetColumn = targetType === "paper" ? "paper_id" : "comment_id";
-      var existing = await client().from("paper_reports").select("id")
-        .eq("reporter_id", activeSession.user.id)
-        .eq(targetColumn, targetId)
-        .maybeSingle();
+      var existing = await Promise.race([
+        (async function () {
+          return await client().from("paper_reports").select("id")
+            .eq("reporter_id", activeSession.user.id)
+            .eq(targetColumn, targetId)
+            .maybeSingle();
+        })(),
+        new Promise(function (resolve, reject) {
+          timeoutId = window.setTimeout(function () {
+            var error = new Error("Checking previous reports timed out after 8 seconds.");
+            error.code = "REPORT_CHECK_TIMEOUT";
+            reject(error);
+          }, 8000);
+        })
+      ]);
       if (existing.error) throw existing.error;
       if (existing.data) {
+        alreadyReported = true;
         feedback.textContent = "Thanks for helping keep the community safe — you’ve already reported this " +
           (targetType === "paper" ? "paper." : "comment.");
-        return;
-      }
-      feedback.textContent = "";
-      var form = host.querySelector("[data-paper-report-form]");
-      if (!form) {
-        form = document.createElement("form");
-        form.className = "paper-comment-form";
-        form.setAttribute("data-paper-report-form", "");
-        form.setAttribute("data-report-target-type", targetType);
-        form.setAttribute("data-report-target-id", targetId);
-        form.innerHTML = '<label class="paper-field">Reason<select data-report-reason required>' +
-          '<option value="">Choose a reason</option><option value="spam">Spam</option>' +
-          '<option value="abuse">Abuse</option><option value="plagiarism">Plagiarism</option>' +
-          '<option value="other">Other</option></select></label>' +
-          '<label class="paper-field">Note (optional)<textarea data-report-note rows="2" maxlength="2000"></textarea></label>' +
-          '<div class="row"><button type="submit" class="pri">Submit report</button>' +
-          '<button type="button" data-report-cancel>Cancel</button></div>';
-        host.appendChild(form);
+      } else {
+        feedback.textContent = "";
       }
     } catch (error) {
-      feedback.textContent = "Could not check previous reports: " + (error.message || "Supabase request failed.");
+      console.error("Could not check previous reports:", error);
+      feedback.textContent = error.code === "REPORT_CHECK_TIMEOUT"
+        ? "Could not verify previous reports because the check timed out after 8 seconds. You can still submit a report."
+        : "Could not verify previous reports. You can still submit a report.";
       feedback.classList.add("error");
+    } finally {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (!alreadyReported) {
+        var form = host.querySelector("[data-paper-report-form]");
+        if (!form) {
+          form = document.createElement("form");
+          form.className = "paper-comment-form";
+          form.setAttribute("data-paper-report-form", "");
+          form.setAttribute("data-report-target-type", targetType);
+          form.setAttribute("data-report-target-id", targetId);
+          form.innerHTML = '<label class="paper-field">Reason<select data-report-reason required>' +
+            '<option value="">Choose a reason</option><option value="spam">Spam</option>' +
+            '<option value="abuse">Abuse</option><option value="plagiarism">Plagiarism</option>' +
+            '<option value="other">Other</option></select></label>' +
+            '<label class="paper-field">Note (optional)<textarea data-report-note rows="2" maxlength="2000"></textarea></label>' +
+            '<div class="row"><button type="submit" class="pri">Send</button>' +
+            '<button type="button" data-report-cancel>Cancel</button></div>';
+          host.appendChild(form);
+        }
+      }
     }
   }
 
@@ -1059,6 +1080,7 @@
       feedback.classList.remove("error");
       form.remove();
     } catch (error) {
+      console.error("Could not submit the report:", error);
       feedback.textContent = "Could not submit the report: " + (error.message || "Supabase request failed.");
       feedback.classList.add("error");
     }
