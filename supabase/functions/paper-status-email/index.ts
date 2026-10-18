@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -48,6 +48,7 @@ async function sendEmail(row: OutboxRow) {
     headers: {
       Authorization: `Bearer ${resendApiKey}`,
       "Content-Type": "application/json",
+      "Idempotency-Key": `paper-status-${row.id}`,
     },
     body: JSON.stringify({
       from: emailFrom,
@@ -79,10 +80,28 @@ Deno.serve(async (req) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const now = new Date().toISOString();
+  const staleSendingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+  const { error: recoverError } = await supabase
+    .from("paper_status_email_outbox")
+    .update({
+      delivery_status: "failed",
+      claimed_at: null,
+      next_attempt_at: now,
+      last_error: "Claim expired; retry available again.",
+    })
+    .eq("delivery_status", "sending")
+    .lt("claimed_at", staleSendingCutoff);
+
+  if (recoverError) {
+    return respond({ error: "outbox_recovery_failed" }, 500);
+  }
+
   const { data: rows, error: fetchError } = await supabase
     .from("paper_status_email_outbox")
     .select("id,recipient_email,paper_title,old_status,new_status,attempt_count")
     .in("delivery_status", ["pending", "failed"])
+    .lt("attempt_count", 5)
     .lte("next_attempt_at", now)
     .order("created_at", { ascending: true })
     .limit(batchSize);
