@@ -1,13 +1,75 @@
 PRIVC ATLAS: WHAT YOU HAVE AND HOW TO KEEP IT UPDATED
 
 THE WHOLE PROJECT IS 2 DOWNLOADS
-1) PRIVC_site.zip     -> index.html. This single file IS the website (all pages, maps, catalogs, citations).
+1) PRIVC_site.zip     -> index.html, reports.js, reports.css, and the reports/ folder. These files together make
+   the static website (all pages, maps, catalogs, citations and the public reports catalogue).
 2) PRIVC_backend.zip  -> this folder. Set up once; it rarely changes. It holds:
      supabase/sql/        two SQL files (run once in Supabase)
      supabase/functions/  two small functions (wb-sync and provider-proxy)
      .github/workflows/   the scheduled jobs (monthly UNDP/ITU, weekly satellite)
      monthly-file-import/ and satellite-datasets/   the scripts those jobs run
-Keep both in ONE GitHub repository: index.html at the top level, and these folders next to it.
+Keep both in ONE GitHub repository: index.html, reports.js, reports.css, reports/, and the backend folders at top level.
+data/wb.json is an optional World Bank override; replace its placeholder only with a complete export newer than the
+built-in data.
+
+REPORTS AND ARTICLES
+- Public items are read from reports/reports.json. Put PDF files in reports/pdf/ and reference them by a relative path,
+  for example reports/pdf/annual-report.pdf.
+- Use Write or publish to create a browser-only draft. Export reports.json to merge those items; remove any draft
+  records you do not want public before committing/deploying the JSON and PDFs with the site. JSON contents are public.
+- Use a local static server (for example VS Code Live Server) to test: browsers do not fetch JSON files reliably from
+  a file:// URL.
+
+COMMUNITY ACCOUNTS AND PROFILES (PHASE 1)
+- The additive migration is supabase/migrations/20261017090000_profiles.sql. Review it and its RLS policies before
+  running it in the existing Supabase project; it creates public.profiles linked to auth.users and does not replace
+  existing policies or rows.
+- config.js contains only the browser-safe Supabase URL and publishable key. Never put SUPABASE_SERVICE_ROLE_KEY in
+  config.js or any other browser file. Keep server-side values in your private environment and deploy
+  supabase/functions/delete-account/ with SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY and
+  ALLOWED_ORIGINS set as Edge Function secrets.
+- In Supabase Auth, enable email confirmation and add /auth/callback to allowed redirect URLs. Google and ORCID
+  sign-in buttons require their providers to be configured in Supabase first.
+- Public profile URLs use /u/username; _redirects and vercel.json provide the static-host rewrite. Photo URLs can be
+  set on a profile for now. Avatar upload policies are intentionally deferred until the existing Storage setup has
+  been inspected.
+- Direct profile URLs require host rewrites: Netlify/Cloudflare Pages use _redirects and Vercel uses vercel.json.
+  GitHub Pages does not support these rewrites, so use Netlify, Cloudflare Pages or Vercel for working /u/username links.
+- The old simulated sign-in/payment gate has been replaced by public guest browsing and real Supabase account flows.
+  The local guest workspace and the existing Atlas sections remain; cloud workspace, papers and engagement are later
+  phases.
+
+PAPER SUBMISSION AND REVIEW (PHASE 2; NOT YET ENABLED IN SUPABASE)
+- The additive migration is supabase/migrations/20261017110000_papers_review.sql. It creates a papers table, a private
+  PDF bucket, row/storage policies and guarded submit/review functions. It contains no drop, truncate or delete
+  statements. Review it and compare it with the live database before choosing to run it; it has NOT been applied.
+- The public Papers button lists Published papers only. Signed-in authors can save Drafts, upload PDFs up to 25 MB,
+  submit papers, and resubmit after requested revisions. Reviewers can start review, request revisions, publish or
+  reject, with feedback required for revision requests and rejections.
+- Only profiles whose account_role is reviewer, publishing_team or admin can see the admin review queue. Assign these
+  roles only through a trusted Supabase administrator workflow; do not expose account_role editing to users.
+- Deploy supabase/functions/paper-pdf/ as an Edge Function with Verify JWT disabled (supabase/config.toml sets this
+  for CLI deployments). Configure SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY and ALLOWED_ORIGINS.
+  The function returns a five-minute signed PDF link only to the author, an authorized reviewer, or anyone requesting
+  a Published paper. Never expose the service-role key in browser configuration.
+- To test after reviewing and applying the migration: configure the function and allowed origin; create a test account;
+  upload a small PDF and save it as Draft; confirm the author can see it but a second account and a signed-out browser
+  cannot. Submit it, assign a test reviewer role through a trusted administrator path, then exercise In review,
+  Revisions requested, resubmission, Published and Rejected. Confirm only Published papers appear signed out and their
+  PDF links expire after five minutes.
+
+PAPER FEED, SEARCH AND PUBLIC PAPER PAGES (PHASE 3; SQL NOT RUN)
+- The additive migration is supabase/migrations/20261017130000_paper_feed.sql. Review it before applying; it adds
+  publication year and view counts and creates a guarded function to record views of Published papers. It is not
+  applied automatically and must be run only after reviewing the SQL.
+- The Papers button opens the public feed. Search covers loaded paper titles, abstracts, topics, authors and years;
+  use Load more papers to include older entries. Each card links to a public paper page and, when the author's
+  profile is public, shows their name and photo linked to that profile.
+- A paper page shows its abstract, topics, publication year, view count, a signed PDF link, and more published
+  papers from the same author. Direct /papers and /papers/<paper-id> links use the Netlify and Vercel rewrites.
+  Locally, open the feed with the Papers button; direct-link refreshes require a host with rewrites.
+- Paper drafts and submissions now include a publication year. Existing papers receive a year from published_at,
+  or created_at when they have not yet been published.
 
 HOW TO UPDATE THE SITE WITHOUT DRAGGING FILES TO NETLIFY EVERY TIME
 - Host on GitHub Pages (free, no deploy limits): GitHub repo > Settings > Pages > Deploy from branch > main / root.

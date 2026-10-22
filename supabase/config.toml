@@ -1,0 +1,8 @@
+[functions.paper-pdf]
+verify_jwt = false
+
+[functions.paper-public-pdf]
+verify_jwt = false
+
+[functions.paper-status-email]
+verify_jwt = false

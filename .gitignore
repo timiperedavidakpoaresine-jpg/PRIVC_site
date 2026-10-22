@@ -1,6 +1,7 @@
 # Never put secrets in the project folder
 *.env
 .env*
+!.env.example
 oval-blend-*.json
 *service-account*.json
 *service_account*.json

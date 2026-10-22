@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/u/:username", "destination": "/" },
+    { "source": "/papers", "destination": "/" },
+    { "source": "/papers/:id", "destination": "/api/paper?id=:id" },
+    { "source": "/auth/callback", "destination": "/" }
+  ]
+}
