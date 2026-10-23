@@ -1147,14 +1147,17 @@
   function createInterface() {
     topBar = document.querySelector(".top");
     wrap = document.querySelector(".wrap");
-    if (!topBar || !wrap) throw new Error("The PRIVC Atlas page shell could not be found.");
+    var menuItems = document.querySelector("#mnb .mg");
+    if (!topBar || !wrap || !menuItems) throw new Error("The PRIVC Atlas page shell could not be found.");
 
     var openButton = document.createElement("button");
     openButton.type = "button";
     openButton.id = "papers-open";
-    openButton.textContent = "Papers";
+    openButton.className = "mt";
+    openButton.style.setProperty("--c", "#be185d");
+    openButton.innerHTML = "Papers and articles<small>Published research and submissions</small>";
     openButton.setAttribute("aria-label", "Open the papers feed");
-    topBar.appendChild(openButton);
+    menuItems.appendChild(openButton);
 
     feedView = document.createElement("section");
     feedView.id = "paper-feed-page";
