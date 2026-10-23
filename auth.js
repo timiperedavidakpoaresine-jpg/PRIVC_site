@@ -134,11 +134,5 @@
         window.dispatchEvent(new CustomEvent("privc:password-recovery"));
       }
     });
-    client.auth.getSession().then(function (result) {
-      if (result.error) emitAuthState("SESSION_ERROR", null, result.error);
-      else emitAuthState("INITIAL_SESSION", result.data.session);
-    }).catch(function (error) {
-      emitAuthState("SESSION_ERROR", null, error);
-    });
   });
 })();

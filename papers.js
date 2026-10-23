@@ -1339,4 +1339,8 @@
       console.error("Paper workflow could not initialize:", error);
     }
   });
+
+  window.PRIVC_PAPERS = {
+    leaveRoute: leavePaperRoute
+  };
 })();

@@ -39,6 +39,13 @@
     statusElement.classList.toggle("error", Boolean(isError));
   }
 
+  function supabaseErrorMessage(error) {
+    var code = error && (error.code || error.statusCode);
+    var message = error && error.message;
+    if (code) return "Supabase error code " + code + ": " + (message || "Request failed.");
+    return message || "Request failed; Supabase did not provide an error code.";
+  }
+
   function setBusy(busy) {
     state.busy = busy;
     document.querySelectorAll("#account-dialog button:not(#account-close),#profile-editor-form button:not(#profile-editor-cancel),#profile-editor-form input,#profile-editor-form textarea")
@@ -423,6 +430,11 @@
 
   async function onAuthChange(event) {
     var detail = event.detail || {};
+    if (detail.error && !detail.session) {
+      setStatus("Could not restore the sign-in session: " +
+        supabaseErrorMessage(detail.error), true);
+      return;
+    }
     var previousUserId = state.session && state.session.user && state.session.user.id;
     state.session = detail.session;
     var userId = state.session && state.session.user && state.session.user.id;
@@ -502,6 +514,7 @@
     document.getElementById("profile-bio").value = profile.bio || "";
     document.getElementById("profile-public").checked = profile.is_public !== false;
     document.getElementById("profile-editor-error").textContent = "";
+    document.getElementById("profile-editor-error").classList.remove("error");
     accountDialog.close();
     document.getElementById("profile-editor-dialog").showModal();
     document.getElementById("profile-display-name").focus();
@@ -565,6 +578,8 @@
     var displayName = document.getElementById("profile-display-name").value.trim();
     var orcid = document.getElementById("profile-orcid").value.trim();
     var errorElement = document.getElementById("profile-editor-error");
+    errorElement.textContent = "";
+    errorElement.classList.remove("error");
     if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(username)) {
       errorElement.textContent = "Choose a username with 3–32 letters, numbers, underscores or hyphens.";
       return;
@@ -586,7 +601,7 @@
       }
       var avatarFile = document.getElementById("profile-avatar-file").files[0] || null;
       var oldAvatar = window.PRIVC_AUTH.getProfileAvatar(state.profile);
-      var avatarUrl = oldAvatar ? state.profile.avatar_url : null;
+      var avatarUrl = state.profile.avatar_url || null;
       var uploadedPath = null;
       if (avatarFile) {
         var resizedAvatar = await resizeProfileAvatar(avatarFile);
@@ -629,8 +644,8 @@
           var rollback = await client().storage.from("profile-avatars").remove([uploadedPath]);
           if (rollback.error) {
             pendingAvatarRemovals.push(uploadedPath);
-            throw new Error((saveError.message || "Profile could not be saved.") +
-              " The new photo could not be cleaned up: " + rollback.error.message);
+            throw new Error(supabaseErrorMessage(saveError) +
+              " New photo cleanup failed: " + supabaseErrorMessage(rollback.error));
           }
         }
         throw saveError;
@@ -646,8 +661,9 @@
         var removal = await client().storage.from("profile-avatars").remove([pathToRemove]);
         if (removal.error) {
           document.getElementById("profile-avatar-file").value = "";
-          errorElement.textContent = "Profile saved, but a previous photo could not be removed: " +
-            removal.error.message + " Save again later to retry cleanup.";
+          errorElement.textContent = "Profile saved, but previous photo cleanup failed: " +
+            supabaseErrorMessage(removal.error) + " Save again later to retry cleanup.";
+          errorElement.classList.add("error");
           document.getElementById("account-greeting").textContent =
             "Signed in as " + state.profile.display_name;
           if (state.route) openProfile(state.profile.username, false);
@@ -659,7 +675,8 @@
       document.getElementById("account-greeting").textContent = "Signed in as " + state.profile.display_name;
       if (state.route) openProfile(state.profile.username, false);
     } catch (error) {
-      errorElement.textContent = error.message || "Profile could not be saved.";
+      errorElement.textContent = "Profile save failed: " + supabaseErrorMessage(error);
+      errorElement.classList.add("error");
     } finally {
       setBusy(false);
     }
@@ -842,6 +859,7 @@
     getProfileById: getProfileById,
     getProfileByUsername: getProfileByUsername,
     saveProfile: saveProfileData,
-    openProfile: openProfile
+    openProfile: openProfile,
+    leaveRoute: leaveProfileRoute
   };
 })();
