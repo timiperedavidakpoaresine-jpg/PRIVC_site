@@ -136,7 +136,7 @@
 
   function avatarMarkup(profile) {
     var avatar = window.PRIVC_AUTH.getProfileAvatar(profile);
-    if (avatar) return '<div class="profile-avatar"><img src="' + escapeHtml(avatar.url) +
+    if (avatar) return '<div class="profile-avatar"><img src="' + escapeHtml(profile.avatar_url) +
       '" alt="' + escapeHtml(profile.display_name || profile.username) + ' profile photo"></div>';
     var initial = String(profile.display_name || profile.username || "?").trim().slice(0, 1).toUpperCase();
     return '<div class="profile-avatar" aria-label="Profile photo placeholder">' + escapeHtml(initial) + "</div>";

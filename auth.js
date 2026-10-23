@@ -27,17 +27,16 @@
   function getProfileAvatar(profile) {
     if (!profile || !profile.id || !profile.avatar_url) return null;
     try {
-      var storage = requireClient().storage.from("profile-avatars");
-      var marker = new URL(storage.getPublicUrl(profile.id + "/__avatar_marker__").data.publicUrl);
+      var projectUrl = window.ATLAS_DB && window.ATLAS_DB.url;
+      if (!projectUrl) return null;
+      var project = new URL(projectUrl);
       var candidate = new URL(profile.avatar_url);
-      var directory = marker.pathname.slice(0, -"/__avatar_marker__".length);
-      if (candidate.origin !== marker.origin || candidate.search || candidate.hash ||
-          !candidate.pathname.startsWith(directory + "/")) return null;
-      var filename = decodeURIComponent(candidate.pathname.slice(directory.length + 1));
+      var bucketPath = "/storage/v1/object/public/profile-avatars/";
+      var userPath = bucketPath + encodeURIComponent(profile.id) + "/";
+      if (candidate.origin !== project.origin || !candidate.pathname.startsWith(userPath)) return null;
+      var filename = decodeURIComponent(candidate.pathname.slice(userPath.length));
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(filename)) return null;
-      var expectedUrl = storage.getPublicUrl(profile.id + "/" + filename).data.publicUrl;
-      if (candidate.href !== new URL(expectedUrl).href) return null;
-      return { url: expectedUrl, path: profile.id + "/" + filename };
+      return { url: profile.avatar_url, path: profile.id + "/" + filename };
     } catch (error) {
       return null;
     }
