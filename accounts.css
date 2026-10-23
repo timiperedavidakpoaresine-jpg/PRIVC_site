@@ -21,6 +21,7 @@
 .profile-avatar{width:104px;height:104px;flex:0 0 104px;display:grid;place-items:center;overflow:hidden;border:1px solid #c9c4f2;border-radius:50%;background:linear-gradient(135deg,#e4ddff,#dceeff);color:#473b8b;font-size:32px;font-weight:700}
 .profile-avatar img{width:100%;height:100%;object-fit:cover}
 .profile-page h2{margin:0 0 4px;font-size:clamp(22px,4vw,30px);overflow-wrap:anywhere}
+.profile-headline{margin:6px 0;color:var(--ink);font-weight:600}
 .profile-page p{overflow-wrap:anywhere}
 .profile-interests{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
 .profile-interest{padding:4px 10px;border:1px solid rgba(110,126,190,.2);border-radius:999px;background:rgba(225,239,255,.78);color:#354a76;font-size:12px}
@@ -66,6 +67,9 @@
 .paper-author:hover{text-decoration:underline}
 .paper-author-avatar{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;overflow:hidden;border:1px solid var(--line);border-radius:50%;background:var(--acc2);font-size:14px}
 .paper-author-avatar img{width:100%;height:100%;object-fit:cover}
+.paper-comment-byline{display:flex;align-items:center;gap:7px;margin:4px 0}
+.paper-comment-avatar{width:26px;height:26px;flex:0 0 26px;display:grid;place-items:center;overflow:hidden;border:1px solid var(--line);border-radius:50%;background:var(--acc2);font-size:11px}
+.paper-comment-avatar img{width:100%;height:100%;object-fit:cover}
 .paper-detail{margin-top:18px}
 .paper-detail h1{font-size:clamp(24px,4vw,36px);margin:18px 0}
 .paper-detail section{margin:24px 0}

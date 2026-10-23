@@ -24,6 +24,25 @@
     return client;
   }
 
+  function getProfileAvatar(profile) {
+    if (!profile || !profile.id || !profile.avatar_url) return null;
+    try {
+      var storage = requireClient().storage.from("profile-avatars");
+      var marker = new URL(storage.getPublicUrl(profile.id + "/__avatar_marker__").data.publicUrl);
+      var candidate = new URL(profile.avatar_url);
+      var directory = marker.pathname.slice(0, -"/__avatar_marker__".length);
+      if (candidate.origin !== marker.origin || candidate.search || candidate.hash ||
+          !candidate.pathname.startsWith(directory + "/")) return null;
+      var filename = decodeURIComponent(candidate.pathname.slice(directory.length + 1));
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(filename)) return null;
+      var expectedUrl = storage.getPublicUrl(profile.id + "/" + filename).data.publicUrl;
+      if (candidate.href !== new URL(expectedUrl).href) return null;
+      return { url: expectedUrl, path: profile.id + "/" + filename };
+    } catch (error) {
+      return null;
+    }
+  }
+
   function siteBasePath() {
     var path = window.location.pathname;
     var routed = path.match(/^(.*\/)(?:u\/[^/]+|papers(?:\/[^/]+)?|auth\/callback)\/?$/);
@@ -100,7 +119,8 @@
     sendPasswordReset: sendPasswordReset,
     updatePassword: updatePassword,
     signInWithProvider: signInWithProvider,
-    deleteAccount: deleteAccount
+    deleteAccount: deleteAccount,
+    getProfileAvatar: getProfileAvatar
   };
 
   document.addEventListener("DOMContentLoaded", function () {

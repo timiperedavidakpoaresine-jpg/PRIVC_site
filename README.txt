@@ -30,9 +30,13 @@ COMMUNITY ACCOUNTS AND PROFILES (PHASE 1)
   ALLOWED_ORIGINS set as Edge Function secrets.
 - In Supabase Auth, enable email confirmation and add /auth/callback to allowed redirect URLs. Google and ORCID
   sign-in buttons require their providers to be configured in Supabase first.
-- Public profile URLs use /u/username; _redirects and vercel.json provide the static-host rewrite. Photo URLs can be
-  set on a profile for now. Avatar upload policies are intentionally deferred until the existing Storage setup has
-  been inspected.
+- Public profile URLs use /u/username; _redirects and vercel.json provide the static-host rewrite. Profile photos are
+  selected with the profile editor, validated as JPEG/PNG/WebP up to 2 MB, resized in the browser to fit 512 × 512,
+  and uploaded under the signed-in user's folder in the profile-avatars bucket. The profile stores the bucket's
+  public URL; replacing a photo removes the previous object through the Storage API. Avatar display accepts URLs
+  only from this bucket and shows a placeholder otherwise. The avatar bucket/policy setup is recorded in
+  supabase/migrations/20261023220000_profile_avatar_storage.sql; the headline column/grants are in
+  supabase/migrations/20261023210000_profile_headline.sql. Both migrations are safe to apply repeatedly.
 - Direct profile URLs require host rewrites: Netlify/Cloudflare Pages use _redirects and Vercel uses vercel.json.
   GitHub Pages does not support these rewrites, so use Netlify, Cloudflare Pages or Vercel for working /u/username links.
 - The old simulated sign-in/payment gate has been replaced by public guest browsing and real Supabase account flows.

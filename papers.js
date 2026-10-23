@@ -204,6 +204,19 @@
         .order("created_at", { ascending: true });
       if (result.error) throw result.error;
       var rows = result.data || [];
+      var commenterProfiles = {};
+      var profileWarning = "";
+      var commenterIds = Array.from(new Set(rows.map(function (comment) {
+        return comment.user_id;
+      }).filter(Boolean)));
+      if (commenterIds.length) {
+        try {
+          commenterProfiles = await loadPublicProfiles(commenterIds);
+        } catch (profileError) {
+          profileWarning = '<p class="paper-muted error">Comment profiles could not be loaded: ' +
+            escapeHtml(profileError.message || "Supabase request failed.") + "</p>";
+        }
+      }
       var byParent = {};
       rows.forEach(function (comment) {
         var key = comment.parent_comment_id || "root";
@@ -214,8 +227,22 @@
         var list = byParent[parentKey] || [];
         return list.map(function (comment) {
           var children = renderComments(comment.id, depth + 1);
+          var commenter = commenterProfiles[comment.user_id];
+          var avatar = commenter && window.PRIVC_AUTH.getProfileAvatar(commenter);
+          var authorName = commenter && (commenter.display_name || commenter.username) ||
+            comment.user_id.slice(0, 8);
+          var avatarContents = avatar
+            ? '<img src="' + escapeHtml(avatar.url) + '" alt="">'
+            : escapeHtml(String(authorName || "?").trim().slice(0, 1).toUpperCase());
+          var authorMarkup = commenter && commenter.username
+            ? '<a data-profile-username="' + escapeHtml(commenter.username) + '" href="' +
+              escapeHtml(routeBase() + "u/" + encodeURIComponent(commenter.username)) + '">' +
+              escapeHtml(authorName) + "</a>"
+            : escapeHtml(authorName);
           return '<div class="paper-comment" style="margin-left:' + (depth * 12) + 'px; margin-top:8px; border-left:1px solid rgba(132,140,208,.25); padding-left:8px;">' +
-            '<div class="paper-card-meta">' + escapeHtml(comment.user_id.slice(0, 8)) + ' · ' + escapeHtml(new Date(comment.created_at).toLocaleDateString()) + '</div>' +
+            '<div class="paper-comment-byline"><span class="paper-comment-avatar" aria-hidden="true">' +
+            avatarContents + '</span><span class="paper-card-meta">' + authorMarkup + ' · ' +
+            escapeHtml(new Date(comment.created_at).toLocaleDateString()) + '</span></div>' +
             '<div>' + escapeHtml(comment.body) + '</div>' +
             '<button type="button" class="paper-action paper-reply-btn" data-paper-reply="' + escapeHtml(comment.id) + '">Reply</button>' +
             '<button type="button" class="paper-action" data-report-comment="' + escapeHtml(comment.id) +
@@ -228,7 +255,8 @@
         '<textarea rows="2" data-paper-comment-body placeholder="Add a comment…" maxlength="2000"></textarea>' +
         '<div class="row"><button type="submit" class="pri">Comment</button></div>' +
         '</form>';
-      commentBox.innerHTML = '<div class="paper-comment-list">' + renderComments("root", 0) + '</div>' + form;
+      commentBox.innerHTML = profileWarning + '<div class="paper-comment-list">' +
+        renderComments("root", 0) + '</div>' + form;
       commentBox.querySelector(".paper-comment-form").addEventListener("submit", async function (event) {
         event.preventDefault();
         var session = await requireActiveSession();
@@ -299,16 +327,10 @@
     if (!author) return '<div class="paper-author"><span class="paper-author-avatar" aria-hidden="true">?</span>' +
       '<span>Researcher</span></div>';
     var name = escapeHtml(author.display_name || author.username);
-    var avatar = "";
-    try {
-      var url = new URL(author.avatar_url || "", window.location.href);
-      if ((url.protocol === "https:" || url.protocol === "http:") && author.avatar_url) {
-        avatar = '<img src="' + escapeHtml(url.href) + '" alt="">';
-      }
-    } catch (error) {
-      avatar = "";
-    }
-    var contents = '<span class="paper-author-avatar">' + (avatar || escapeHtml(
+    var avatar = window.PRIVC_AUTH.getProfileAvatar(author);
+    var contents = '<span class="paper-author-avatar">' + (avatar
+      ? '<img src="' + escapeHtml(avatar.url) + '" alt="">'
+      : escapeHtml(
       String(author.display_name || author.username || "?").trim().slice(0, 1).toUpperCase())) +
       '</span><span>' + name + '</span>';
     return author.username

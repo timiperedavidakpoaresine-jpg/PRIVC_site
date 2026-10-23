@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var SELECT_FIELDS = "id,username,display_name,affiliation,country,bio,research_interests,orcid,website,avatar_url,is_public,created_at,updated_at";
+  var SELECT_FIELDS = "id,username,display_name,headline,affiliation,country,bio,research_interests,orcid,website,avatar_url,is_public,created_at,updated_at";
   var state = { session: null, profile: null, busy: false, route: false };
   var wrap;
   var topBar;
@@ -14,6 +14,7 @@
   var recoveryMode = false;
   var authChangeVersion = 0;
   var profileRouteVersion = 0;
+  var pendingAvatarRemovals = [];
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -40,8 +41,8 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    document.querySelectorAll("#account-dialog button:not(#account-close),#profile-editor-form button:not(#profile-editor-cancel)")
-      .forEach(function (button) { button.disabled = busy; });
+    document.querySelectorAll("#account-dialog button:not(#account-close),#profile-editor-form button:not(#profile-editor-cancel),#profile-editor-form input,#profile-editor-form textarea")
+      .forEach(function (control) { control.disabled = busy; });
   }
 
   function routeBase() {
@@ -127,15 +128,8 @@
   }
 
   function avatarMarkup(profile) {
-    var avatar = String(profile.avatar_url || "").trim();
-    var safeUrl = "";
-    try {
-      var parsed = new URL(avatar, window.location.href);
-      if (parsed.protocol === "https:" || parsed.protocol === "http:") safeUrl = parsed.href;
-    } catch (error) {
-      safeUrl = "";
-    }
-    if (safeUrl) return '<div class="profile-avatar"><img src="' + escapeHtml(safeUrl) +
+    var avatar = window.PRIVC_AUTH.getProfileAvatar(profile);
+    if (avatar) return '<div class="profile-avatar"><img src="' + escapeHtml(avatar.url) +
       '" alt="' + escapeHtml(profile.display_name || profile.username) + ' profile photo"></div>';
     var initial = String(profile.display_name || profile.username || "?").trim().slice(0, 1).toUpperCase();
     return '<div class="profile-avatar" aria-label="Profile photo placeholder">' + escapeHtml(initial) + "</div>";
@@ -214,8 +208,9 @@
       '<label class="account-field">Country<input id="profile-country" maxlength="100"></label>' +
       '<label class="account-field">ORCID<input id="profile-orcid" placeholder="0000-0000-0000-0000"></label>' +
       '<label class="account-field">Website<input id="profile-website" type="url" placeholder="https://example.org"></label>' +
-      '<label class="account-field">Photo URL<input id="profile-avatar" type="url" placeholder="https://example.org/photo.jpg">' +
-      '<small>Image uploads will be added after the existing Storage setup is inspected.</small></label>' +
+      '<label class="account-field">Headline<input id="profile-headline" maxlength="160"></label>' +
+      '<label class="account-field">Profile photo<input id="profile-avatar-file" type="file" accept="image/jpeg,image/png,image/webp">' +
+      '<small>JPEG, PNG, or WebP; maximum 2 MB. Images are resized to fit within 512 × 512 pixels.</small></label>' +
       '<label class="account-field">Research interests<input id="profile-interests" placeholder="climate policy, health"></label></div>' +
       '<label class="account-field">Biography<textarea id="profile-bio" rows="5" maxlength="3000"></textarea></label>' +
       '<label class="account-field"><input id="profile-public" type="checkbox"> Make my profile public</label>' +
@@ -501,7 +496,8 @@
     document.getElementById("profile-country").value = profile.country || "";
     document.getElementById("profile-orcid").value = profile.orcid || "";
     document.getElementById("profile-website").value = profile.website || "";
-    document.getElementById("profile-avatar").value = profile.avatar_url || "";
+    document.getElementById("profile-headline").value = profile.headline || "";
+    document.getElementById("profile-avatar-file").value = "";
     document.getElementById("profile-interests").value = (profile.research_interests || []).join(", ");
     document.getElementById("profile-bio").value = profile.bio || "";
     document.getElementById("profile-public").checked = profile.is_public !== false;
@@ -509,6 +505,57 @@
     accountDialog.close();
     document.getElementById("profile-editor-dialog").showModal();
     document.getElementById("profile-display-name").focus();
+  }
+
+  async function resizeProfileAvatar(file) {
+    var allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (allowedTypes.indexOf(file.type) === -1) {
+      throw new Error("Choose a JPEG, PNG, or WebP image.");
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      throw new Error("Choose an image no larger than 2 MB.");
+    }
+
+    var image;
+    var objectUrl;
+    try {
+      if (typeof window.createImageBitmap === "function") {
+        image = await window.createImageBitmap(file);
+      } else {
+        objectUrl = URL.createObjectURL(file);
+        image = await new Promise(function (resolve, reject) {
+          var element = new Image();
+          element.onload = function () { resolve(element); };
+          element.onerror = function () { reject(new Error("The selected image could not be read.")); };
+          element.src = objectUrl;
+        });
+      }
+
+      var scale = Math.min(1, 512 / Math.max(image.width, image.height));
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      var context = canvas.getContext("2d");
+      if (!context) throw new Error("Image resizing is not available in this browser.");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      var blob = await new Promise(function (resolve, reject) {
+        canvas.toBlob(function (result) {
+          if (result) resolve(result);
+          else reject(new Error("The selected image could not be resized."));
+        }, file.type, file.type === "image/png" ? undefined : 0.88);
+      });
+      if (allowedTypes.indexOf(blob.type) === -1) {
+        throw new Error("This browser could not encode the image as JPEG, PNG, or WebP.");
+      }
+      if (blob.size > 2 * 1024 * 1024) {
+        throw new Error("The resized image is larger than 2 MB. Choose a smaller image.");
+      }
+      return blob;
+    } finally {
+      if (image && typeof image.close === "function") image.close();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
   }
 
   async function saveProfile(event) {
@@ -533,25 +580,81 @@
     try {
       setBusy(true);
       var website = document.getElementById("profile-website").value.trim();
-      var avatar = document.getElementById("profile-avatar").value.trim();
-      [website, avatar].forEach(function (value) {
-        if (!value) return;
-        var url = new URL(value);
-        if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Website and photo URLs must use http or https.");
-      });
-      state.profile = await saveProfileData(state.session.user.id, {
-        username: username,
-        display_name: displayName,
-        affiliation: document.getElementById("profile-affiliation").value.trim(),
-        country: document.getElementById("profile-country").value.trim(),
-        orcid: orcid || null,
-        website: website || null,
-        avatar_url: avatar || null,
-        research_interests: document.getElementById("profile-interests").value.split(",")
-          .map(function (item) { return item.trim(); }).filter(Boolean),
-        bio: document.getElementById("profile-bio").value.trim(),
-        is_public: document.getElementById("profile-public").checked
-      });
+      if (website) {
+        var url = new URL(website);
+        if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Website URLs must use http or https.");
+      }
+      var avatarFile = document.getElementById("profile-avatar-file").files[0] || null;
+      var oldAvatar = window.PRIVC_AUTH.getProfileAvatar(state.profile);
+      var avatarUrl = oldAvatar ? state.profile.avatar_url : null;
+      var uploadedPath = null;
+      if (avatarFile) {
+        var resizedAvatar = await resizeProfileAvatar(avatarFile);
+        var extension = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/webp": "webp"
+        }[resizedAvatar.type];
+        var filename = window.crypto && typeof window.crypto.randomUUID === "function"
+          ? window.crypto.randomUUID()
+          : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+        uploadedPath = state.session.user.id + "/" + filename + "." + extension;
+        var upload = await client().storage.from("profile-avatars").upload(uploadedPath, resizedAvatar, {
+          cacheControl: "3600",
+          contentType: resizedAvatar.type,
+          upsert: false
+        });
+        if (upload.error) throw upload.error;
+        avatarUrl = client().storage.from("profile-avatars").getPublicUrl(uploadedPath).data.publicUrl;
+      }
+
+      var updatedProfile;
+      try {
+        updatedProfile = await saveProfileData(state.session.user.id, {
+          username: username,
+          display_name: displayName,
+          headline: document.getElementById("profile-headline").value.trim() || null,
+          affiliation: document.getElementById("profile-affiliation").value.trim(),
+          country: document.getElementById("profile-country").value.trim(),
+          orcid: orcid || null,
+          website: website || null,
+          avatar_url: avatarUrl,
+          research_interests: document.getElementById("profile-interests").value.split(",")
+            .map(function (item) { return item.trim(); }).filter(Boolean),
+          bio: document.getElementById("profile-bio").value.trim(),
+          is_public: document.getElementById("profile-public").checked
+        });
+      } catch (saveError) {
+        if (uploadedPath) {
+          var rollback = await client().storage.from("profile-avatars").remove([uploadedPath]);
+          if (rollback.error) {
+            pendingAvatarRemovals.push(uploadedPath);
+            throw new Error((saveError.message || "Profile could not be saved.") +
+              " The new photo could not be cleaned up: " + rollback.error.message);
+          }
+        }
+        throw saveError;
+      }
+      state.profile = updatedProfile;
+      if (uploadedPath && oldAvatar && oldAvatar.path !== uploadedPath) {
+        if (pendingAvatarRemovals.indexOf(oldAvatar.path) === -1) {
+          pendingAvatarRemovals.push(oldAvatar.path);
+        }
+      }
+      while (pendingAvatarRemovals.length) {
+        var pathToRemove = pendingAvatarRemovals[0];
+        var removal = await client().storage.from("profile-avatars").remove([pathToRemove]);
+        if (removal.error) {
+          document.getElementById("profile-avatar-file").value = "";
+          errorElement.textContent = "Profile saved, but a previous photo could not be removed: " +
+            removal.error.message + " Save again later to retry cleanup.";
+          document.getElementById("account-greeting").textContent =
+            "Signed in as " + state.profile.display_name;
+          if (state.route) openProfile(state.profile.username, false);
+          return;
+        }
+        pendingAvatarRemovals.shift();
+      }
       document.getElementById("profile-editor-dialog").close();
       document.getElementById("account-greeting").textContent = "Signed in as " + state.profile.display_name;
       if (state.route) openProfile(state.profile.username, false);
@@ -627,6 +730,7 @@
           '<div class="profile-page-head" style="margin-top:16px">' + avatarMarkup(profile) +
           '<div><h2>' + escapeHtml(profile.display_name || profile.username) + '</h2>' +
           '<div class="account-muted">@' + escapeHtml(profile.username) + "</div>" +
+          (profile.headline ? '<p class="profile-headline">' + escapeHtml(profile.headline) + "</p>" : "") +
           (profile.affiliation ? '<p>' + escapeHtml(profile.affiliation) + "</p>" : "") +
           (profile.country ? '<p class="account-muted">' + escapeHtml(profile.country) + "</p>" : "") +
           "</div></div>" +
