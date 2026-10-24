@@ -181,7 +181,7 @@ async function sendEmail(row: OutboxRow, supabase: ReturnType<typeof createClien
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${resendApiKey}`,
+      Authorization: `Bearer ${anonKey}`,
       "Content-Type": "application/json",
       "Idempotency-Key": `paper-status-${row.id}`,
     },
